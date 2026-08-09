@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block subtitle %}receipts{% endblock %}
+{% block content %}
+<h1>Receipts</h1>
+
+<div class="panel">
+  <form method="post" action="/receipts/upload" enctype="multipart/form-data" style="display: inline">
+    Upload a receipt or invoice (PDF, photo, HTML, text):
+    <input type="file" name="file" size="24">
+    <input type="submit" class="btn btn-primary" value="Upload">
+  </form>
+  <form method="post" action="/receipts/scan" style="display: inline">
+    <input type="submit" class="btn" value="Scan for matches">
+  </form>
+  <p class="small dim">Uploads are read automatically (OCR for photos, AI for
+  categories if configured) and matched to transactions with the same amount
+  within 5 days. Originals are kept forever.</p>
+</div>
+
+<h2>Inbox — waiting to be linked</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Uploaded</th><th>File</th><th>Vendor</th><th>Date</th><th class="num">Total</th><th>Status</th></tr>
+  {% for d in unlinked %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ d.uploaded_at[:10] }}</td>
+    <td><a href="/receipts/{{ d.id }}">{{ d.filename }}</a></td>
+    <td>{{ d.vendor or '?' }}</td>
+    <td>{{ d.doc_date or '?' }}</td>
+    <td class="num">{{ d.total|money }}</td>
+    <td><span class="chip {% if d.status == 'parsed' %}chip-ok{% else %}chip-warn{% endif %}">{{ d.status }}</span></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="6" class="dim">Inbox zero. Nice.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recently linked</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>File</th><th>Vendor</th><th class="num">Total</th><th>Transaction</th></tr>
+  {% for d in linked %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><a href="/receipts/{{ d.id }}">{{ d.filename }}</a></td>
+    <td>{{ d.vendor }}</td>
+    <td class="num">{{ d.total|money }}</td>
+    <td><a href="/transactions/{{ d.linked_transaction_id }}/edit">#{{ d.linked_transaction_id }}</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="4" class="dim">Nothing linked yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -65,6 +65,7 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
         home,
         imports,
         monthly,
+        receipts_pages,
         reports,
         setup,
         settings_pages,
@@ -84,6 +85,7 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
         setup,
         settings_pages,
         stocks_pages,
+        receipts_pages,
     ):
         app.include_router(module.router)
     return app

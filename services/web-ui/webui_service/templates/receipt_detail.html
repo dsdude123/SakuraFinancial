@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block subtitle %}receipt {{ doc.filename }}{% endblock %}
+{% block content %}
+<h1>{{ doc.filename }}
+  <span class="titlebar-sub">{{ doc.status }} &middot; uploaded {{ doc.uploaded_at[:10] }}</span></h1>
+
+{% if doc.parse_note %}<div class="warnpanel">{{ doc.parse_note }}</div>{% endif %}
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="50%" valign="top">
+  <h2>Details</h2>
+  <div class="panel">
+    <form method="post" action="/receipts/{{ doc.id }}/update">
+      <table class="form">
+        <tr><td class="formlabel">Vendor:</td>
+            <td><input type="text" name="vendor" size="24" value="{{ doc.vendor }}"></td></tr>
+        <tr><td class="formlabel">Date:</td>
+            <td><input type="text" name="doc_date" size="12" value="{{ doc.doc_date or '' }}">
+                <span class="dim small">YYYY-MM-DD</span></td></tr>
+        <tr><td class="formlabel">Total charged:</td>
+            <td><input type="text" name="total" size="12" value="{{ doc.total or '' }}"></td></tr>
+        <tr><td></td><td><input type="submit" class="btn" value="Save details"></td></tr>
+      </table>
+    </form>
+    <form method="post" action="/receipts/{{ doc.id }}/reparse" style="display: inline">
+      <input type="submit" class="btn" value="Re-read with AI">
+    </form>
+    <a href="/receipts/{{ doc.id }}/file">view original file</a>
+    <form method="post" action="/receipts/{{ doc.id }}/ignore" style="display: inline">
+      <input type="submit" class="btn" value="Ignore this receipt">
+    </form>
+  </div>
+
+  <h2>Line items (the split)</h2>
+  <div class="panel">
+    <form method="post" action="/receipts/{{ doc.id }}/items">
+      <table class="form">
+        <tr><td><b>Description</b></td><td><b>Amount</b></td><td><b>Category</b></td></tr>
+        {% for i in range(item_rows) %}
+        {% set item = doc['items'][i] if i < doc['items']|length else None %}
+        <tr>
+          <td><input type="text" name="item_desc_{{ i }}" size="24" value="{{ item.description if item else '' }}"></td>
+          <td><input type="text" name="item_amount_{{ i }}" size="8" value="{{ item.amount if item else '' }}"></td>
+          <td>
+            <select name="item_category_{{ i }}">
+              <option value="">(uncategorized)</option>
+              {% for c in categories %}
+                <option value="{{ c.id }}" {% if item and item.category_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      <input type="submit" class="btn" value="Save items">
+      <input type="submit" class="btn" name="action_add" value="Add a line">
+    </form>
+    {% if doc.linked_transaction_id and doc['items'] %}
+    <hr>
+    <form method="post" action="/receipts/{{ doc.id }}/apply-split">
+      <input type="submit" class="btn btn-primary"
+             value="Apply this split to transaction #{{ doc.linked_transaction_id }}">
+    </form>
+    <p class="small dim">Re-divides that ONE transaction's total across the
+    categories above — the register still shows a single transaction, and
+    any difference becomes a visible "(receipt rounding)" line.</p>
+    {% endif %}
+  </div>
+</td>
+<td width="50%" valign="top" style="padding-left: 12px">
+  <h2>Transaction link</h2>
+  {% if linked_txn %}
+    <div class="msg">Linked to
+      <a href="/transactions/{{ linked_txn.id }}/edit">#{{ linked_txn.id }}</a> —
+      {{ linked_txn.date }}, {{ linked_txn.payee_name or linked_txn.memo }},
+      <b>{{ linked_txn.total|money }}</b> in {{ linked_txn.account_name }}.
+    </div>
+    <form method="post" action="/receipts/{{ doc.id }}/unlink">
+      <input type="submit" class="btn" value="Unlink">
+    </form>
+  {% else %}
+    {% if candidates %}
+    <table class="data" cellpadding="0" cellspacing="0">
+      <tr><th>Date</th><th>Payee / memo</th><th class="num">Amount</th><th>Account</th><th></th></tr>
+      {% for t in candidates %}
+      <tr class="{{ loop.cycle('odd', 'even') }}">
+        <td>{{ t.date }}</td>
+        <td>{{ t.payee_name or t.memo }}</td>
+        <td class="num">{{ t.total|money }}</td>
+        <td>{{ t.account_name }}</td>
+        <td>
+          <form method="post" action="/receipts/{{ doc.id }}/link">
+            <input type="hidden" name="transaction_id" value="{{ t.id }}">
+            <input type="submit" class="btn" value="This one">
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="dim">No candidate transactions found — a match needs the exact
+    amount within 5 days of the receipt date. Fill in the date and total, or
+    wait until the charge is imported, then use "Scan for matches".</p>
+    {% endif %}
+  {% endif %}
+
+  <h2>Extracted text</h2>
+  <div class="panel">
+    <pre style="font-family: Tahoma, Verdana, Arial, sans-serif; font-size: 10px; white-space: pre-wrap; margin: 0">{{ doc.extracted_text[:4000] or '(nothing extracted)' }}</pre>
+  </div>
+</td>
+</tr></table>
+<p><a href="/receipts">&laquo; Back to receipts</a></p>
+{% endblock %}

@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from budget_service.ledger_client import LedgerClient
 from budget_service.main import create_app as create_budget_app
 from ledger_service.main import create_app as create_ledger_app
+from receipts_service.ledger_client import LedgerClient as ReceiptsLedgerClient
+from receipts_service.main import create_app as create_receipts_app
 from settings_service.main import create_app as create_settings_app
 from stocks_service.main import create_app as create_stocks_app
 from webui_service.clients import Clients
@@ -74,7 +76,7 @@ def make_fake_yahoo():
 
 
 @pytest.fixture()
-def stack():
+def stack(tmp_path):
     ledger_app = create_ledger_app(database_url="sqlite://")
     settings_app = create_settings_app(database_url="sqlite://")
     budget_app = create_budget_app(
@@ -100,6 +102,14 @@ def stack():
         settings_client=SettingsViaApp(settings_app),
         enable_scheduler=False,
     )
+    receipts_app = create_receipts_app(
+        database_url="sqlite://",
+        ledger_client=ReceiptsLedgerClient(
+            base_url="http://ledger", transport=SyncASGITransport(ledger_app)
+        ),
+        settings_client=SettingsViaApp(settings_app),
+        data_dir=str(tmp_path / "receipts-data"),
+    )
     webui_app = create_webui_app(
         clients=Clients(
             transports={
@@ -107,7 +117,7 @@ def stack():
                 "budget": httpx.ASGITransport(app=budget_app),
                 "settings": httpx.ASGITransport(app=settings_app),
                 "stocks": httpx.ASGITransport(app=stocks_app),
-                "receipts": httpx.MockTransport(down_service_handler),
+                "receipts": httpx.ASGITransport(app=receipts_app),
             }
         ),
         secret_key="test-secret",
@@ -117,6 +127,7 @@ def stack():
         "budget": budget_app,
         "settings": settings_app,
         "stocks": stocks_app,
+        "receipts": receipts_app,
         "webui": webui_app,
     }
 
