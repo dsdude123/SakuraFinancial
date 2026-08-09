@@ -71,6 +71,18 @@ def money_str(amount: Decimal | None) -> str | None:
     return f"{integer}.{fraction}"
 
 
+def qty_str(quantity: Decimal | None) -> str | None:
+    """Plain-notation string for share quantities: trailing zeros trimmed,
+    never scientific notation. Decimal("10.000000") -> "10";
+    Decimal("0.500000") -> "0.5"."""
+    if quantity is None:
+        return None
+    text = format(quantity, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def quantize(amount: Decimal, currency: str = "USD") -> Decimal:
     """Round an amount to its currency's display precision (half-up)."""
     decimals = CURRENCY_DECIMALS.get(currency.upper(), 2)

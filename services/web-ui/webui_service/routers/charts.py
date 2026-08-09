@@ -112,6 +112,28 @@ async def cashflow_chart(request: Request, months: int = 12):
     return to_png(figure)
 
 
+@router.get("/charts/stock.png")
+async def stock_chart(request: Request, symbol: str, months: int = 12):
+    history = await request.app.state.clients.stocks.get(
+        f"/api/prices/{symbol}", params={"months": months}
+    )
+    figure = new_figure(7.2, 3.0)
+    axes = figure.add_subplot()
+    style_axes(axes)
+    if history:
+        dates = [row["date"] for row in history]
+        closes = [float(row["close"]) for row in history]
+        axes.plot(range(len(dates)), closes, color=NAVY, linewidth=1.5)
+        ticks = list(range(0, len(dates), max(1, len(dates) // 10)))
+        axes.set_xticks(ticks)
+        axes.set_xticklabels([dates[i] for i in ticks], rotation=45, ha="right", fontsize=7)
+    else:
+        axes.text(0.5, 0.5, "No price history yet", ha="center", fontsize=10, color="#808080")
+    figure.suptitle(f"{symbol.upper()} — daily close", fontsize=10, color=NAVY)
+    figure.subplots_adjust(bottom=0.3)
+    return to_png(figure)
+
+
 @router.get("/charts/networth.png")
 async def networth_chart(request: Request, months: int = 24):
     series = await request.app.state.clients.ledger.get(

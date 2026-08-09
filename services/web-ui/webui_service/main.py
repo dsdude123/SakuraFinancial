@@ -68,6 +68,7 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
         reports,
         setup,
         settings_pages,
+        stocks_pages,
     )
 
     app.include_router(auth_pages.router)
@@ -82,6 +83,7 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
         charts,
         setup,
         settings_pages,
+        stocks_pages,
     ):
         app.include_router(module.router)
     return app

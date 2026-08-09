@@ -19,8 +19,8 @@
   Usually this means the import profile doesn't match the file — wrong column
   names, wrong date format, or the wrong sign convention.
   <br><br>
-  <a href="/import/profiles?edit={{ profile_id }}"><b>&raquo; Fix the profile</b></a>
+  <a href="{{ fix_url or '/import/profiles?edit=' ~ profile_id }}"><b>&raquo; Fix the profile</b></a>
   &nbsp;then&nbsp;
-  <a href="/import">&raquo; upload the file again</a>
+  <a href="{{ retry_url or '/import' }}">&raquo; upload the file again</a>
 </div>
 {% endblock %}

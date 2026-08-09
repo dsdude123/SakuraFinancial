@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block subtitle %}analysis{% endblock %}
+{% block content %}
+<h1>Analysis <span class="titlebar-sub">{{ analysis.created_at[:16] }}</span></h1>
+
+{% if analysis.ai_text %}
+<h2>AI guidance</h2>
+<div class="panel"><pre style="font-family: Tahoma, Verdana, Arial, sans-serif; white-space: pre-wrap; margin: 0">{{ analysis.ai_text }}</pre></div>
+{% else %}
+<div class="warnpanel">No AI guidance — configure a provider on the
+<a href="/settings">Settings</a> page to get commentary shaped by your trading
+philosophy. The data below still works without it.</div>
+{% endif %}
+
+<h2>Valuation at analysis time</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Cash</th><th>Holdings value</th><th>Total</th></tr>
+  <tr class="odd">
+    <td class="num">{{ analysis.fundamentals.valuation.cash|money }}</td>
+    <td class="num">{{ analysis.fundamentals.valuation.market_value|money }}</td>
+    <td class="num"><b>{{ analysis.fundamentals.valuation.total|money }}</b></td>
+  </tr>
+</table>
+
+<h2>Holdings snapshot</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Symbol</th><th class="num">Shares</th><th class="num">Cost basis</th>
+      <th class="num">Market value</th><th class="num">Unrealized</th></tr>
+  {% for h in analysis.fundamentals.holdings %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ h.symbol }}</td>
+    <td class="num">{{ h.quantity }}</td>
+    <td class="num">{{ h.cost_basis|money }}</td>
+    <td class="num">{{ h.market_value|money }}</td>
+    <td class="num">{{ h.unrealized_gain|money }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>52-week picture</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Symbol</th><th class="num">Latest</th><th class="num">52w high</th>
+      <th class="num">52w low</th><th class="num">1y change</th></tr>
+  {% for s in analysis.fundamentals.price_summaries %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ s.symbol }}</td>
+    <td class="num">{{ s.latest|money }}</td>
+    <td class="num">{{ s.high_52w|money }}</td>
+    <td class="num">{{ s.low_52w|money }}</td>
+    <td class="num">{{ s.year_change_pct }}%</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small dim">Fundamentals come from Yahoo Finance and may be partial.
+Nothing here is licensed financial advice.</p>
+{% endblock %}

@@ -11,6 +11,7 @@ from budget_service.ledger_client import LedgerClient
 from budget_service.main import create_app as create_budget_app
 from ledger_service.main import create_app as create_ledger_app
 from settings_service.main import create_app as create_settings_app
+from stocks_service.main import create_app as create_stocks_app
 from webui_service.clients import Clients
 from webui_service.main import create_app as create_webui_app
 
@@ -38,6 +39,40 @@ def down_service_handler(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("service not part of this test rig")
 
 
+def make_fake_yahoo():
+    """Offline Yahoo: AAPL exists with two closes; everything else is unknown."""
+    from datetime import datetime, timezone
+
+    rows = [("2026-08-06", 150.0), ("2026-08-07", 152.5)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/chart/AAPL" in str(request.url):
+            timestamps = [
+                int(datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp())
+                for day, _ in rows
+            ]
+            return httpx.Response(
+                200,
+                json={
+                    "chart": {
+                        "result": [
+                            {
+                                "meta": {"symbol": "AAPL", "regularMarketPrice": rows[-1][1]},
+                                "timestamp": timestamps,
+                                "indicators": {"quote": [{"close": [c for _, c in rows]}]},
+                            }
+                        ],
+                        "error": None,
+                    }
+                },
+            )
+        return httpx.Response(200, json={"chart": {"result": None, "error": {"code": "404"}}})
+
+    from sakura_common.yahoo import YahooClient
+
+    return YahooClient(transport=httpx.MockTransport(handler))
+
+
 @pytest.fixture()
 def stack():
     ledger_app = create_ledger_app(database_url="sqlite://")
@@ -48,19 +83,42 @@ def stack():
             base_url="http://ledger", transport=SyncASGITransport(ledger_app)
         ),
     )
+
+    class SettingsViaApp:
+        def __init__(self, app):
+            self._client = TestClient(app)
+
+        def get(self, key, default=None):
+            response = self._client.get(f"/api/settings/{key}", params={"reveal": "true"})
+            if response.status_code != 200:
+                return default
+            return response.json().get("value", default)
+
+    stocks_app = create_stocks_app(
+        database_url="sqlite://",
+        yahoo=make_fake_yahoo(),
+        settings_client=SettingsViaApp(settings_app),
+        enable_scheduler=False,
+    )
     webui_app = create_webui_app(
         clients=Clients(
             transports={
                 "ledger": httpx.ASGITransport(app=ledger_app),
                 "budget": httpx.ASGITransport(app=budget_app),
                 "settings": httpx.ASGITransport(app=settings_app),
-                "stocks": httpx.MockTransport(down_service_handler),
+                "stocks": httpx.ASGITransport(app=stocks_app),
                 "receipts": httpx.MockTransport(down_service_handler),
             }
         ),
         secret_key="test-secret",
     )
-    return {"ledger": ledger_app, "budget": budget_app, "settings": settings_app, "webui": webui_app}
+    return {
+        "ledger": ledger_app,
+        "budget": budget_app,
+        "settings": settings_app,
+        "stocks": stocks_app,
+        "webui": webui_app,
+    }
 
 
 @pytest.fixture()
