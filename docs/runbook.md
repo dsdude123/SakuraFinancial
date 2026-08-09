@@ -6,19 +6,29 @@ two years from now, at 11pm, when something is weird.
 ## First start
 
 ```sh
-cp .env.example .env    # set real passwords
 docker compose up --build -d
 docker compose ps       # wait until everything is healthy
 ```
 
-Visit `http://<host>:8000`, set the login password when prompted, then go to
-**Settings** and configure what you need (LLM provider + key if you want AI
-features; nothing is required).
+There is nothing to configure first. Visit `http://<host>:8000`, set the login
+password when prompted, then go to **Settings** for anything optional (LLM
+provider + key if you want AI features; nothing is required).
 
 The per-service databases are created by `infra/postgres-init/` **only on the
-first start with an empty `pgdata` volume**. If you change DB passwords in
-`.env` later, you must also change them in Postgres (`ALTER USER ... WITH
-PASSWORD ...`) — the init script will not re-run.
+first start with an empty `pgdata` volume**, using the fixed passwords in the
+`db` service's environment. Those are safe as constants because Postgres
+publishes no port — it exists only on the stack's private network — while the
+separate per-service users still stop any service from reading another's
+tables. If you ever do change them in `docker-compose.yml`, change them in
+Postgres too (`ALTER USER ... WITH PASSWORD ...`): the init script does not
+re-run on an existing volume.
+
+**The session-signing key is the one real secret.** web-ui generates a random
+key on first boot and stores it at `/data/webui/session_secret` in the
+`webui_data` volume; it is never a value shipped in this repository, because
+a known key would let anyone forge a login cookie and skip the password.
+Deleting that volume simply logs you out (a new key is generated). To manage
+the key yourself, set `SECRET_KEY` in the environment and it wins.
 
 ## Backups
 
@@ -39,10 +49,12 @@ session, storing copies off the host.
 
 ## Restore / disaster recovery
 
-Fresh host: check out the repo, restore `.env`, `docker compose up -d`, wait
-healthy, then Web UI → *Backup & Restore* → Upload your export zip. Restore
-order across services is handled by the restore endpoint itself (settings →
-ledger → budget → stocks → receipts).
+Fresh host: check out the repo, `docker compose up --build -d`, wait healthy,
+then Web UI → *Backup & Restore* → Upload your export zip. Nothing else to
+restore first — the stack needs no configuration to start. Restore order
+across services is handled by the restore endpoint itself (settings → ledger
+→ budget → stocks → receipts). You'll set a login password again on the way
+in unless the backup's settings export carries the old hash, which it does.
 
 From a Postgres dump instead:
 `cat sakura-YYYY-MM-DD.sql | docker compose exec -T db psql -U postgres`.
@@ -50,7 +62,9 @@ From a Postgres dump instead:
 ## Security posture
 
 - Only web-ui is published (`:8000`), protected by a single-user password
-  (hash stored in the settings service; session is a signed cookie).
+  (hash stored in the settings service; session is a cookie signed with the
+  per-installation key described above). Postgres and the five internal
+  services have no published ports at all.
 - **Plain HTTP by design**: IE6 cannot do modern TLS. Keep the port on a
   trusted LAN; if you also browse from modern devices, put a TLS reverse
   proxy on a *different* published port and leave :8000 LAN-only.

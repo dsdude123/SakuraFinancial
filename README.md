@@ -33,13 +33,24 @@ All inter-service traffic stays on the internal Docker network.
 ## Quick start
 
 ```sh
-cp .env.example .env      # then edit the passwords
 docker compose up --build
 ```
 
-Browse to `http://<host>:8000`. On first visit you'll be asked to set the
-login password. Everything else — LLM API keys, import profiles, FX rates —
-is configured on the Settings pages inside the app.
+That's the whole setup — no config files, no passwords to invent. Browse to
+`http://<host>:8000` and pick your login password on the first visit.
+Everything else — LLM API keys, import profiles, FX rates — is configured on
+the Settings pages inside the app.
+
+Why nothing to configure: Postgres publishes no port, so it's reachable only
+from the other containers on the stack's private network, and its passwords
+are fixed values in `docker-compose.yml` (per-service users still keep the
+services isolated from each other). The one secret that is *not* a shipped
+constant is the session-signing key — web-ui generates a random one on first
+boot and keeps it in a volume, so nobody can forge a login cookie from
+reading this repo.
+
+Optional environment overrides: `WEBUI_PORT` to publish the UI on a different
+port, `SECRET_KEY` if you'd rather manage the session key yourself.
 
 > The UI is served over plain HTTP on your LAN because IE6 on Windows 98
 > cannot negotiate modern TLS. Do not expose the port to the internet; see

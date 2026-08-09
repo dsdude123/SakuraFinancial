@@ -19,6 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import NotAuthenticated, require_login
 from .clients import Clients, ServiceError
 from .rendering import make_templates, render
+from .secret import resolve_secret_key
 
 
 def create_app(clients: Clients | None = None, secret_key: str | None = None) -> FastAPI:
@@ -28,7 +29,8 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
 
     app.add_middleware(
         SessionMiddleware,
-        secret_key=secret_key or os.environ.get("SECRET_KEY", "sakura-dev-secret"),
+        # Never a shipped constant — see webui_service/secret.py.
+        secret_key=secret_key or resolve_secret_key(),
         max_age=60 * 60 * 24 * 30,
         same_site="lax",
     )
