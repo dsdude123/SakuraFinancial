@@ -2,7 +2,30 @@ from decimal import Decimal
 
 import pytest
 
-from sakura_common.money import AmountParseError, format_amount, parse_amount, quantize
+from sakura_common.money import (
+    AmountParseError,
+    format_amount,
+    money_str,
+    parse_amount,
+    quantize,
+)
+
+
+class TestMoneyStr:
+    def test_trims_storage_scale(self):
+        assert money_str(Decimal("1000.0000")) == "1000.00"
+
+    def test_keeps_extra_precision(self):
+        assert money_str(Decimal("-12.345")) == "-12.345"
+
+    def test_integer_gets_two_decimals(self):
+        assert money_str(Decimal("7")) == "7.00"
+
+    def test_zero(self):
+        assert money_str(Decimal("0.0000")) == "0.00"
+
+    def test_none_passthrough(self):
+        assert money_str(None) is None
 
 
 class TestParseAmount:

@@ -52,6 +52,25 @@ def parse_amount(raw: str) -> Decimal:
     return -value if negative else value
 
 
+def money_str(amount: Decimal | None) -> str | None:
+    """Canonical string form for amounts in APIs and exports: plain notation,
+    trailing zeros trimmed, but never fewer than 2 decimal places.
+
+    Decimal("1000.0000") -> "1000.00";  Decimal("0.7100") -> "0.71";
+    Decimal("-12.345") -> "-12.345";  Decimal("7") -> "7.00".
+    """
+    if amount is None:
+        return None
+    text = format(amount, "f")
+    if "." not in text:
+        return text + ".00"
+    integer, fraction = text.split(".")
+    fraction = fraction.rstrip("0")
+    if len(fraction) < 2:
+        fraction = (fraction + "00")[:2]
+    return f"{integer}.{fraction}"
+
+
 def quantize(amount: Decimal, currency: str = "USD") -> Decimal:
     """Round an amount to its currency's display precision (half-up)."""
     decimals = CURRENCY_DECIMALS.get(currency.upper(), 2)
