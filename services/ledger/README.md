@@ -38,8 +38,35 @@ here. Live OpenAPI docs at `/docs` on the service port.
 | Reports | `/api/reports/category-actuals`, `/api/reports/cashflow`, `/api/reports/net-worth` |
 | Backup | `GET /api/export`, `POST /api/import` (full replace, IDs preserved) |
 
-Bills and CSV import endpoints are documented in the sections of this README
-added with their phases (see also `docs/data-model.md`).
+## CSV import
+
+Per-institution **import profiles** (`/api/import/profiles`) describe the file
+shape: delimiter, header handling, column mapping (single-amount or
+debit/credit), date format, sign convention. Config keys are documented in
+`sakura_common.csvengine`.
+
+The pipeline is **all-or-nothing**: `POST /api/import/preview` validates the
+entire file first; any bad row (unparseable amount, wrong date format, missing
+column) rejects the upload with a complete row-by-row error report and writes
+NOTHING. A valid file becomes a review batch whose rows are classified:
+
+| Row status | Meaning |
+| ---------- | ------- |
+| `duplicate` | Row hash (account+date+amount+normalized description) already imported — excluded by default, can be forced back in |
+| `transfer` | A transfer rule matched (e.g. descriptions starting `VENMO` → transfer to the configured account) |
+| `ready` | A learned payee alias matched; payee + default category prefilled |
+| `needs_payee` | Unknown description — pick or create a payee (`PUT /api/import/rows/{id}`); the choice is learned as an alias so next month maps automatically |
+
+`POST /api/import/batches/{id}/commit` turns included rows into cleared
+transactions (transfer rows become paired transfer legs), learns aliases, runs
+**bill matching** on every new transaction (fixed-amount mismatches surface in
+the commit summary as `amount_review`), and pings the receipts service to link
+waiting receipts. Batches also seed newly added accounts with history.
+
+Transfer rules live at `/api/transfer-rules`.
+
+Bill endpoints are documented in the bills section below (see also
+`docs/data-model.md`).
 
 ## Delete semantics
 

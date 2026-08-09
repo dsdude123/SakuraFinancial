@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -170,6 +171,84 @@ class Split(Base):
 
     transaction: Mapped[Transaction] = relationship(back_populates="splits")
     category: Mapped[Category | None] = relationship()
+
+
+class TransferRule(Base):
+    """Imported descriptions matching the pattern become transfers to/from
+    ``account_id`` instead of categorized transactions (PAYPAL, VENMO,
+    credit-card payments...). Patterns match the normalized description."""
+
+    __tablename__ = "transfer_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pattern: Mapped[str] = mapped_column(String(300))
+    match_type: Mapped[str] = mapped_column(String(10), default="prefix")
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    account: Mapped[Account] = relationship()
+
+
+class ImportProfile(Base):
+    """How to read one institution's CSV files — see
+    sakura_common.csvengine for the config keys."""
+
+    __tablename__ = "import_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    account: Mapped[Account | None] = relationship()
+
+
+IMPORT_BATCH_STATUSES = ("review", "committed", "aborted")
+IMPORT_ROW_STATUSES = ("ready", "needs_payee", "duplicate", "transfer")
+
+
+class ImportBatch(Base):
+    __tablename__ = "import_batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    profile_id: Mapped[int] = mapped_column(ForeignKey("import_profiles.id"))
+    filename: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(12), default="review")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    account: Mapped[Account] = relationship()
+    profile: Mapped[ImportProfile] = relationship()
+    rows: Mapped[list["ImportRow"]] = relationship(
+        back_populates="batch", cascade="all, delete-orphan", order_by="ImportRow.line_no"
+    )
+
+
+class ImportRow(Base):
+    """One parsed CSV row awaiting review. Rows only become transactions when
+    the batch is committed; until then nothing touches the register."""
+
+    __tablename__ = "import_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id", ondelete="CASCADE"), index=True)
+    line_no: Mapped[int] = mapped_column(Integer)
+    date: Mapped[date] = mapped_column(Date)
+    description: Mapped[str] = mapped_column(Text)
+    memo: Mapped[str] = mapped_column(Text, default="")
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    row_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(12), default="needs_payee")
+    include: Mapped[bool] = mapped_column(Boolean, default=True)
+    payee_id: Mapped[int | None] = mapped_column(ForeignKey("payees.id"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    transfer_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    learn_alias: Mapped[bool] = mapped_column(Boolean, default=False)
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
+
+    batch: Mapped[ImportBatch] = relationship(back_populates="rows")
+    payee: Mapped[Payee | None] = relationship()
 
 
 DEFAULT_CURRENCIES = [
