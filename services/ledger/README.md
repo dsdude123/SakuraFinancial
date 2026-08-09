@@ -65,8 +65,29 @@ waiting receipts. Batches also seed newly added accounts with history.
 
 Transfer rules live at `/api/transfer-rules`.
 
-Bill endpoints are documented in the bills section below (see also
-`docs/data-model.md`).
+## Bills
+
+Bills (`/api/bills`) carry a payee, category, frequency (`weekly` …
+`annual`), an expected amount, and an `is_variable` flag. Creating one
+materializes `bill_occurrences` ~13 months ahead.
+
+- **Matching** runs on every new normal transaction — manual or imported:
+  same payee, due date within ±10 days, closest occurrence wins. Variable
+  bills accept any amount; a fixed bill matched at a different amount flags
+  the occurrence **`amount_review`**, which the UI turns into the prompt
+  *"Electric was $150.00, expected $142.19 — update the bill?"*.
+  `POST /api/bills/occurrences/{id}/resolve` with `update_bill` adopts the
+  new amount on the bill and all upcoming occurrences; `keep` treats it as a
+  one-off. Unresolved reviews stay visible on the bills overview.
+- **Accrual** (`GET /api/bills/accrual`): every bill reduced to a *monthly
+  load* (annual/12, quarterly/3, weekly×52/12 …), totals grouped by category,
+  and per-bill set-aside progress — the December insurance premium shows up
+  as $100/month all year, with "you should have $800 set aside by now" in
+  August.
+- Occurrence management: list/filter (`/api/bills/occurrences`), `skip`,
+  `unmatch` (undo a wrong match).
+
+See also `docs/data-model.md`.
 
 ## Delete semantics
 

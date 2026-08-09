@@ -13,7 +13,17 @@ from sqlalchemy import select
 
 from .db import Base, make_engine, make_session_factory
 from .models import Currency, DEFAULT_CURRENCIES
-from .routers import accounts, categories, exports, imports, meta, payees, reports, transactions
+from .routers import (
+    accounts,
+    bills,
+    categories,
+    exports,
+    imports,
+    meta,
+    payees,
+    reports,
+    transactions,
+)
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
@@ -40,6 +50,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(payees.router)
     app.include_router(transactions.router)
     app.include_router(imports.router)
+    app.include_router(bills.router)
     app.include_router(reports.router)
     app.include_router(exports.router)
     return app

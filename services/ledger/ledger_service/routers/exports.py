@@ -17,19 +17,29 @@ from sakura_common.money import money_str
 from ..db import get_db
 from ..models import (
     Account,
+    Bill,
+    BillOccurrence,
     Category,
     Currency,
     FxRate,
+    ImportProfile,
     Payee,
     PayeeAlias,
     Split,
     Transaction,
+    TransferRule,
 )
 
 router = APIRouter(prefix="/api", tags=["export"])
 
 # Deletion order respects FKs (children first); insertion is the reverse.
 CORE_TABLES = [
+    "bill_occurrences",
+    "bills",
+    "import_rows",
+    "import_batches",
+    "import_profiles",
+    "transfer_rules",
     "transaction_splits",
     "transactions",
     "payee_aliases",
@@ -134,6 +144,53 @@ def export_core(db: Session) -> dict:
             }
             for t in transactions
         ],
+        "bills": [
+            {
+                "id": b.id,
+                "name": b.name,
+                "payee_id": b.payee_id,
+                "category_id": b.category_id,
+                "account_id": b.account_id,
+                "frequency": b.frequency,
+                "amount": money_str(b.amount),
+                "is_variable": b.is_variable,
+                "next_due": b.next_due.isoformat(),
+                "active": b.active,
+                "note": b.note,
+            }
+            for b in db.execute(select(Bill).order_by(Bill.id)).scalars()
+        ],
+        "bill_occurrences": [
+            {
+                "id": o.id,
+                "bill_id": o.bill_id,
+                "due_date": o.due_date.isoformat(),
+                "expected_amount": money_str(o.expected_amount),
+                "actual_amount": money_str(o.actual_amount),
+                "status": o.status,
+                "matched_transaction_id": o.matched_transaction_id,
+            }
+            for o in db.execute(select(BillOccurrence).order_by(BillOccurrence.id)).scalars()
+        ],
+        "transfer_rules": [
+            {
+                "id": r.id,
+                "pattern": r.pattern,
+                "match_type": r.match_type,
+                "account_id": r.account_id,
+                "active": r.active,
+            }
+            for r in db.execute(select(TransferRule).order_by(TransferRule.id)).scalars()
+        ],
+        "import_profiles": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "account_id": p.account_id,
+                "config": p.config,
+            }
+            for p in db.execute(select(ImportProfile).order_by(ImportProfile.id)).scalars()
+        ],
     }
 
 
@@ -195,6 +252,25 @@ def import_core(db: Session, data: dict) -> dict:
                 match_type=a.get("match_type", "exact"),
             )
         )
+    for r in data.get("transfer_rules", []):
+        db.add(
+            TransferRule(
+                id=r["id"],
+                pattern=r["pattern"],
+                match_type=r.get("match_type", "prefix"),
+                account_id=r["account_id"],
+                active=r.get("active", True),
+            )
+        )
+    for p in data.get("import_profiles", []):
+        db.add(
+            ImportProfile(
+                id=p["id"],
+                name=p["name"],
+                account_id=p.get("account_id"),
+                config=p.get("config", {}),
+            )
+        )
     counts = {"transactions": 0}
     for t in data["transactions"]:
         txn = Transaction(
@@ -218,8 +294,49 @@ def import_core(db: Session, data: dict) -> dict:
             )
         db.add(txn)
         counts["transactions"] += 1
+    for b in data.get("bills", []):
+        db.add(
+            Bill(
+                id=b["id"],
+                name=b["name"],
+                payee_id=b["payee_id"],
+                category_id=b.get("category_id"),
+                account_id=b.get("account_id"),
+                frequency=b.get("frequency", "monthly"),
+                amount=jsonutil.parse_decimal(b["amount"]),
+                is_variable=b.get("is_variable", False),
+                next_due=jsonutil.parse_date(b["next_due"]),
+                active=b.get("active", True),
+                note=b.get("note", ""),
+            )
+        )
+    for o in data.get("bill_occurrences", []):
+        db.add(
+            BillOccurrence(
+                id=o["id"],
+                bill_id=o["bill_id"],
+                due_date=jsonutil.parse_date(o["due_date"]),
+                expected_amount=jsonutil.parse_decimal(o["expected_amount"]),
+                actual_amount=jsonutil.parse_decimal(o.get("actual_amount")),
+                status=o.get("status", "upcoming"),
+                matched_transaction_id=o.get("matched_transaction_id"),
+            )
+        )
     reset_sequences(
-        db, ["accounts", "categories", "payees", "payee_aliases", "fx_rates", "transactions", "transaction_splits"]
+        db,
+        [
+            "accounts",
+            "categories",
+            "payees",
+            "payee_aliases",
+            "fx_rates",
+            "transactions",
+            "transaction_splits",
+            "bills",
+            "bill_occurrences",
+            "transfer_rules",
+            "import_profiles",
+        ],
     )
     return counts
 

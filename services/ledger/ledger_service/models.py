@@ -173,6 +173,53 @@ class Split(Base):
     category: Mapped[Category | None] = relationship()
 
 
+BILL_FREQUENCIES = ("weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual")
+BILL_OCCURRENCE_STATUSES = ("upcoming", "paid", "skipped", "amount_review")
+
+
+class Bill(Base):
+    """A recurring obligation. ``amount`` is the expected outflow (positive);
+    ``is_variable`` bills accept any matched amount, fixed bills flag
+    ``amount_review`` when the matched amount differs."""
+
+    __tablename__ = "bills"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(150))
+    payee_id: Mapped[int] = mapped_column(ForeignKey("payees.id"))
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    frequency: Mapped[str] = mapped_column(String(12), default="monthly")
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    is_variable: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_due: Mapped[date] = mapped_column(Date)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+
+    payee: Mapped[Payee] = relationship()
+    category: Mapped[Category | None] = relationship()
+    occurrences: Mapped[list["BillOccurrence"]] = relationship(
+        back_populates="bill", cascade="all, delete-orphan", order_by="BillOccurrence.due_date"
+    )
+
+
+class BillOccurrence(Base):
+    __tablename__ = "bill_occurrences"
+    __table_args__ = (UniqueConstraint("bill_id", "due_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id", ondelete="CASCADE"), index=True)
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    expected_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    actual_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    status: Mapped[str] = mapped_column(String(15), default="upcoming", index=True)
+    matched_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    bill: Mapped[Bill] = relationship(back_populates="occurrences")
+
+
 class TransferRule(Base):
     """Imported descriptions matching the pattern become transfers to/from
     ``account_id`` instead of categorized transactions (PAYPAL, VENMO,
