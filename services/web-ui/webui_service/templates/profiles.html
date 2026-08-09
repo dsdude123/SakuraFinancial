@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block subtitle %}import profiles{% endblock %}
+{% block content %}
+<h1>Import profiles</h1>
+<p class="small dim">A profile teaches SakuraFinancial how one institution's CSV
+files are shaped. Column references use the header name (e.g. <code>Amount</code>)
+or a 0-based index for headerless files.</p>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Profile</th><th>Account</th><th>Columns</th><th></th></tr>
+  {% for p in profiles %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ p.name }}</td>
+    <td>{% for a in accounts %}{% if a.id == p.account_id %}{{ a.name }}{% endif %}{% endfor %}</td>
+    <td class="small dim">
+      date={{ p.config.date_column }} ({{ p.config.date_format or '%m/%d/%Y' }}),
+      desc={{ p.config.description_column }},
+      {% if p.config.amount_mode == 'debit_credit' %}debit={{ p.config.debit_column }}/credit={{ p.config.credit_column }}{% else %}amount={{ p.config.amount_column }}{% endif %}
+      {% if p.config.negate_amount %}, negated{% endif %}
+    </td>
+    <td><a href="/import/profiles?edit={{ p.id }}">edit</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="4" class="dim">No profiles yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>{% if editing %}Edit profile: {{ editing.name }}{% else %}New profile{% endif %}</h2>
+<div class="panel">
+  <form method="post" action="{% if editing %}/import/profiles/{{ editing.id }}{% else %}/import/profiles{% endif %}">
+    {% set cfg = editing.config if editing else {} %}
+    <table class="form">
+      <tr>
+        <td class="formlabel">Name:</td>
+        <td><input type="text" name="name" size="24" value="{{ editing.name if editing else '' }}"></td>
+        <td class="formlabel">Default account:</td>
+        <td><select name="account_id">
+          <option value="">(choose at import time)</option>
+          {% for a in accounts %}
+            <option value="{{ a.id }}" {% if editing and editing.account_id == a.id %}selected{% endif %}>{{ a.name }}</option>
+          {% endfor %}
+        </select></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Delimiter:</td>
+        <td><input type="text" name="delimiter" size="2" value="{{ cfg.get('delimiter', ',') }}"></td>
+        <td class="formlabel">Header row:</td>
+        <td><input type="checkbox" name="has_header" {% if cfg.get('has_header', True) %}checked{% endif %}>
+            &nbsp;skip top rows: <input type="text" name="skip_top_rows" size="2" value="{{ cfg.get('skip_top_rows', 0) }}"></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Date column:</td>
+        <td><input type="text" name="date_column" size="14" value="{{ cfg.get('date_column', '') }}"></td>
+        <td class="formlabel">Date format:</td>
+        <td><input type="text" name="date_format" size="14" value="{{ cfg.get('date_format', '%m/%d/%Y') }}">
+            <span class="dim small">strptime, e.g. %m/%d/%Y</span></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Description column:</td>
+        <td><input type="text" name="description_column" size="14" value="{{ cfg.get('description_column', '') }}"></td>
+        <td class="formlabel">Memo column:</td>
+        <td><input type="text" name="memo_column" size="14" value="{{ cfg.get('memo_column', '') }}">
+            <span class="dim small">optional</span></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Amount style:</td>
+        <td>
+          <select name="amount_mode">
+            <option value="single" {% if cfg.get('amount_mode', 'single') == 'single' %}selected{% endif %}>one signed column</option>
+            <option value="debit_credit" {% if cfg.get('amount_mode') == 'debit_credit' %}selected{% endif %}>separate debit / credit</option>
+          </select>
+        </td>
+        <td class="formlabel">Columns:</td>
+        <td>
+          amount <input type="text" name="amount_column" size="10" value="{{ cfg.get('amount_column', '') }}">
+          debit <input type="text" name="debit_column" size="10" value="{{ cfg.get('debit_column', '') }}">
+          credit <input type="text" name="credit_column" size="10" value="{{ cfg.get('credit_column', '') }}">
+        </td>
+      </tr>
+      <tr>
+        <td class="formlabel">Flip signs:</td>
+        <td><input type="checkbox" name="negate_amount" {% if cfg.get('negate_amount') %}checked{% endif %}>
+            <span class="dim small">for banks that write charges as positive</span></td>
+        <td></td>
+        <td><input type="submit" class="btn btn-primary" value="Save profile"></td>
+      </tr>
+    </table>
+  </form>
+</div>
+{% endblock %}

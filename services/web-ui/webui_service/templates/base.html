@@ -1,0 +1,52 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>{% block title %}SakuraFinancial{% endblock %}</title>
+<link rel="stylesheet" type="text/css" href="/static/sakura.css">
+</head>
+<body>
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr>
+    <td colspan="2" class="titlebar">
+      &#127800; SakuraFinancial
+      <span class="titlebar-sub">&nbsp;&mdash;&nbsp;{% block subtitle %}personal finance{% endblock %}</span>
+    </td>
+  </tr>
+  <tr>
+    <td class="navcell">
+      <div class="navheading">Money</div>
+      <div class="navitem"><a href="/">Home</a></div>
+      <div class="navitem"><a href="/accounts">Accounts</a></div>
+      <div class="navitem"><a href="/bills">Bills</a></div>
+      <div class="navitem"><a href="/budget">Budget</a></div>
+      <div class="navitem"><a href="/goals">Goals</a></div>
+      <div class="navheading">Tasks</div>
+      <div class="navitem"><a href="/monthly">Monthly Updates</a></div>
+      <div class="navitem"><a href="/import">Import CSV</a></div>
+      <div class="navitem"><a href="/receipts">Receipts</a></div>
+      <div class="navheading">Investing</div>
+      <div class="navitem"><a href="/stocks">Stocks</a></div>
+      <div class="navheading">Insight</div>
+      <div class="navitem"><a href="/reports">Reports</a></div>
+      <div class="navheading">System</div>
+      <div class="navitem"><a href="/payees">Payees</a></div>
+      <div class="navitem"><a href="/categories">Categories</a></div>
+      <div class="navitem"><a href="/settings">Settings</a></div>
+      <div class="navitem"><a href="/backup">Backup</a></div>
+      <div class="navitem"><a href="/logout">Log out</a></div>
+    </td>
+    <td class="contentcell">
+      {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+      {% if err %}<div class="err">{{ err }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" class="footer">
+      SakuraFinancial &mdash; self-hosted, IE6-approved, no banks were contacted in the making of this page.
+    </td>
+  </tr>
+</table>
+</body>
+</html>

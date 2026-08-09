@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block subtitle %}categories{% endblock %}
+{% block content %}
+<h1>Categories</h1>
+
+{% if not categories %}
+<div class="panel">
+  Fresh start? Install a sensible starter set (Rent, Groceries, Utilities, Salary, ...):
+  <form method="post" action="/categories/seed-defaults">
+    <input type="submit" class="btn btn-primary" value="Add starter categories">
+  </form>
+</div>
+{% endif %}
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+{% for kind in ('expense', 'income') %}
+<td width="50%" valign="top" {% if not loop.first %}style="padding-left: 12px"{% endif %}>
+  <h2>{{ kind|capitalize }} categories</h2>
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Category</th><th>Active</th><th></th></tr>
+    {% for c in categories %}{% if c.kind == kind and not c.parent_id %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ c.name }}</td>
+      <td>{% if c.active %}<span class="chip chip-ok">yes</span>{% else %}<span class="chip">no</span>{% endif %}</td>
+      <td class="small">
+        <form method="post" action="/categories/{{ c.id }}/update">
+          {% if c.active %}
+            <input type="submit" class="btn" value="Deactivate">
+          {% else %}
+            <input type="hidden" name="active" value="on">
+            <input type="submit" class="btn" value="Reactivate">
+          {% endif %}
+        </form>
+      </td>
+    </tr>
+    {% for sub in categories %}{% if sub.parent_id == c.id %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>&nbsp;&nbsp;&#8627; {{ sub.name }}</td>
+      <td>{% if sub.active %}<span class="chip chip-ok">yes</span>{% else %}<span class="chip">no</span>{% endif %}</td>
+      <td></td>
+    </tr>
+    {% endif %}{% endfor %}
+    {% endif %}{% endfor %}
+  </table>
+</td>
+{% endfor %}
+</tr></table>
+
+<h2>New category</h2>
+<div class="panel">
+  <form method="post" action="/categories">
+    Name <input type="text" name="name" size="20">
+    <select name="kind">
+      <option value="expense">expense</option>
+      <option value="income">income</option>
+    </select>
+    Parent
+    <select name="parent_id">
+      <option value="">(top level)</option>
+      {% for c in parents %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+    </select>
+    <input type="submit" class="btn btn-primary" value="Create">
+  </form>
+  <p class="small dim">Reimbursements need no special category: post the incoming
+  money against the expense category (e.g. Rent) and it reduces that category's
+  spending. Categories in use can be deactivated but never deleted.</p>
+</div>
+{% endblock %}

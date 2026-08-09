@@ -1,0 +1,37 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>Log in - SakuraFinancial</title>
+<link rel="stylesheet" type="text/css" href="/static/sakura.css">
+</head>
+<body>
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+  <br><br>
+  <table cellpadding="0" cellspacing="0" border="0" width="360">
+    <tr><td class="titlebar">&#127800; SakuraFinancial</td></tr>
+    <tr><td class="panel">
+      {% if err %}<div class="err">{{ err }}</div>{% endif %}
+      {% if first_run %}
+        <p><b>Welcome!</b> This is a fresh installation. Choose the password
+        you will use to open your finances.</p>
+        <form method="post" action="/setup-password">
+          <table class="form">
+            <tr><td class="formlabel">Password:</td><td><input type="password" name="password" size="24"></td></tr>
+            <tr><td class="formlabel">Repeat:</td><td><input type="password" name="password2" size="24"></td></tr>
+            <tr><td></td><td><input type="submit" class="btn btn-primary" value="Set password"></td></tr>
+          </table>
+        </form>
+      {% else %}
+        <form method="post" action="/login">
+          <table class="form">
+            <tr><td class="formlabel">Password:</td><td><input type="password" name="password" size="24"></td></tr>
+            <tr><td></td><td><input type="submit" class="btn btn-primary" value="Open my finances"></td></tr>
+          </table>
+        </form>
+      {% endif %}
+    </td></tr>
+  </table>
+</td></tr></table>
+</body>
+</html>

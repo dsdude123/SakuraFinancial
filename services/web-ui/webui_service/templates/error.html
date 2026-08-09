@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Problem - SakuraFinancial{% endblock %}
+{% block subtitle %}something went wrong{% endblock %}
+{% block content %}
+<h1>That didn't work</h1>
+<div class="err">
+  {% if status %}
+    The <b>{{ service }}</b> service answered with an error{% if status %} (code {{ status }}){% endif %}:
+  {% else %}
+    The <b>{{ service }}</b> service could not be reached. Is its container running?
+    Try <code>docker compose ps</code> on the server.
+  {% endif %}
+</div>
+<div class="panel">
+  {% if detail is mapping %}
+    <p><b>{{ detail.message }}</b></p>
+    {% if detail.errors %}
+      <table class="data" cellpadding="0" cellspacing="0">
+        <tr><th>Line</th><th>Problem</th><th>Row content</th></tr>
+        {% for e in detail.errors %}
+          <tr class="{{ loop.cycle('odd', 'even') }}">
+            <td class="num">{{ e.line_no }}</td>
+            <td>{{ e.message }}</td>
+            <td class="small dim">{{ e.raw }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  {% else %}
+    <p>{{ detail }}</p>
+  {% endif %}
+</div>
+<p><a href="/">&laquo; Back to Home</a></p>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block subtitle %}import done{% endblock %}
+{% block content %}
+<h1>Import complete</h1>
+
+<div class="msg">
+  Imported <b>{{ summary.created }}</b> transaction(s)
+  and <b>{{ summary.transfers }}</b> transfer(s);
+  skipped {{ summary.skipped }} row(s).
+  {% if summary.uncategorized %}<br>{{ summary.uncategorized }} imported without a category —
+  find them via the register or Home &rsaquo; To do.{% endif %}
+</div>
+
+{% if summary.amount_review %}
+<div class="warnpanel">
+  <b>&#9888; Fixed bills were charged different amounts.</b> Decide for each:
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Bill</th><th>Due</th><th class="num">Expected</th><th class="num">Charged</th><th>Decide</th></tr>
+    {% for m in summary.amount_review %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ m.bill_name }}</td>
+      <td>{{ m.due_date }}</td>
+      <td class="num">{{ m.expected_amount|money }}</td>
+      <td class="num"><b>{{ m.actual_amount|money }}</b></td>
+      <td>
+        <form method="post" action="/bills/occurrences/{{ m.id }}/resolve" style="display: inline">
+          <input type="hidden" name="action" value="update_bill">
+          <input type="submit" class="btn" value="Update bill">
+        </form>
+        <form method="post" action="/bills/occurrences/{{ m.id }}/resolve" style="display: inline">
+          <input type="hidden" name="action" value="keep">
+          <input type="submit" class="btn" value="Keep old amount">
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% elif summary.bill_matches %}
+<div class="msg">{{ summary.bill_matches|length }} bill(s) marked paid automatically.</div>
+{% endif %}
+
+<p>
+  <a href="/monthly">&raquo; Back to Monthly Updates</a> &nbsp;|&nbsp;
+  <a href="/import">&raquo; Import another file</a> &nbsp;|&nbsp;
+  <a href="/">&raquo; Home</a>
+</p>
+{% endblock %}

@@ -1,0 +1,86 @@
+"""Full-stack test rig: the web UI runs against REAL ledger, budget, and
+settings apps booted in-process on SQLite, wired together with httpx ASGI
+transports. No mocks of our own APIs — if a page works here, it works on the
+compose stack."""
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from budget_service.ledger_client import LedgerClient
+from budget_service.main import create_app as create_budget_app
+from ledger_service.main import create_app as create_ledger_app
+from settings_service.main import create_app as create_settings_app
+from webui_service.clients import Clients
+from webui_service.main import create_app as create_webui_app
+
+
+class SyncASGITransport(httpx.BaseTransport):
+    """Lets a synchronous httpx client (budget's ledger client) call an ASGI
+    app in-process."""
+
+    def __init__(self, app):
+        self._client = TestClient(app)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        response = self._client.request(
+            request.method,
+            str(request.url),
+            headers=dict(request.headers),
+            content=request.content,
+        )
+        return httpx.Response(
+            response.status_code, headers=response.headers, content=response.content
+        )
+
+
+def down_service_handler(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("service not part of this test rig")
+
+
+@pytest.fixture()
+def stack():
+    ledger_app = create_ledger_app(database_url="sqlite://")
+    settings_app = create_settings_app(database_url="sqlite://")
+    budget_app = create_budget_app(
+        database_url="sqlite://",
+        ledger_client=LedgerClient(
+            base_url="http://ledger", transport=SyncASGITransport(ledger_app)
+        ),
+    )
+    webui_app = create_webui_app(
+        clients=Clients(
+            transports={
+                "ledger": httpx.ASGITransport(app=ledger_app),
+                "budget": httpx.ASGITransport(app=budget_app),
+                "settings": httpx.ASGITransport(app=settings_app),
+                "stocks": httpx.MockTransport(down_service_handler),
+                "receipts": httpx.MockTransport(down_service_handler),
+            }
+        ),
+        secret_key="test-secret",
+    )
+    return {"ledger": ledger_app, "budget": budget_app, "settings": settings_app, "webui": webui_app}
+
+
+@pytest.fixture()
+def browser(stack):
+    """An anonymous browser session."""
+    with TestClient(stack["webui"], follow_redirects=False) as client:
+        yield client
+
+
+@pytest.fixture()
+def logged_in(browser):
+    """A browser that has completed first-run password setup."""
+    response = browser.post(
+        "/setup-password", data={"password": "hunter22", "password2": "hunter22"}
+    )
+    assert response.status_code == 303
+    return browser
+
+
+@pytest.fixture()
+def ledger_api(stack):
+    """Direct access to the ledger API for seeding test data."""
+    return TestClient(stack["ledger"])

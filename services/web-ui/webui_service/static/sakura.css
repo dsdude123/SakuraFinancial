@@ -1,0 +1,171 @@
+/* SakuraFinancial — period-correct Win98/MS Money chrome.
+   IE6-safe subset only: no floats-for-layout, no :hover on non-anchors,
+   no child selectors, no max-width, no alpha PNG backgrounds.
+   Enforced by services/web-ui/tests/test_ie6_lint.py. */
+
+body {
+    background-color: #c0c0c0;
+    color: #000000;
+    font-family: Tahoma, Verdana, Arial, sans-serif;
+    font-size: 11px;
+    margin: 0;
+    padding: 0;
+}
+
+a { color: #0000ee; }
+a:visited { color: #551a8b; }
+a:hover { color: #ff0000; }
+
+hr { border: 0; border-top: 1px solid #808080; border-bottom: 1px solid #ffffff; height: 0; }
+
+/* ---- application chrome ---- */
+
+.titlebar {
+    background-color: #000080;
+    color: #ffffff;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 4px 8px;
+}
+.titlebar-sub {
+    color: #c0c0ff;
+    font-weight: normal;
+    font-size: 11px;
+}
+
+.navcell {
+    background-color: #c0c0c0;
+    border-right: 2px outset #ffffff;
+    padding: 6px;
+    width: 150px;
+    vertical-align: top;
+}
+.navheading {
+    background-color: #808080;
+    color: #ffffff;
+    font-weight: bold;
+    padding: 2px 4px;
+    margin-top: 8px;
+}
+.navitem { padding: 3px 2px 3px 10px; }
+
+.contentcell {
+    background-color: #ffffff;
+    border: 2px inset #ffffff;
+    padding: 10px;
+    vertical-align: top;
+}
+
+h1 {
+    font-size: 15px;
+    background-color: #000080;
+    color: #ffffff;
+    padding: 3px 8px;
+    margin: 0 0 10px 0;
+}
+h2 {
+    font-size: 12px;
+    background-color: #c0c0c0;
+    border: 1px outset #ffffff;
+    padding: 2px 6px;
+    margin: 14px 0 6px 0;
+}
+
+/* ---- panels & messages ---- */
+
+.panel {
+    background-color: #c0c0c0;
+    border: 2px outset #ffffff;
+    padding: 8px;
+    margin-bottom: 10px;
+}
+.msg {
+    background-color: #dff0d8;
+    border: 1px solid #808080;
+    padding: 4px 8px;
+    margin-bottom: 8px;
+}
+.err {
+    background-color: #ffdddd;
+    border: 1px solid #aa0000;
+    color: #aa0000;
+    padding: 4px 8px;
+    margin-bottom: 8px;
+}
+.warnpanel {
+    background-color: #ffffcc;
+    border: 2px outset #ffffff;
+    padding: 8px;
+    margin-bottom: 10px;
+}
+
+/* ---- data tables (the ledger look) ---- */
+
+table.data {
+    background-color: #ffffff;
+    border: 2px inset #ffffff;
+    border-collapse: collapse;
+    width: 100%;
+}
+table.data th {
+    background-color: #000080;
+    color: #ffffff;
+    font-weight: bold;
+    text-align: left;
+    padding: 3px 6px;
+    border-right: 1px solid #4040a0;
+}
+table.data td {
+    padding: 3px 6px;
+    border-bottom: 1px solid #d4d0c8;
+}
+tr.odd td { background-color: #ffffff; }
+tr.even td { background-color: #ece9d8; }
+tr.totalrow td {
+    background-color: #c0c0c0;
+    font-weight: bold;
+    border-top: 2px solid #808080;
+}
+
+td.num, th.num { text-align: right; }
+.neg { color: #cc0000; }
+.pos { color: #006600; }
+.dim { color: #808080; }
+.small { font-size: 10px; }
+
+.chip {
+    border: 1px solid #808080;
+    background-color: #ece9d8;
+    padding: 0 4px;
+    font-size: 10px;
+}
+.chip-ok { background-color: #ccffcc; }
+.chip-warn { background-color: #ffffcc; }
+.chip-bad { background-color: #ffcccc; }
+
+/* ---- forms ---- */
+
+input, select, textarea {
+    font-family: Tahoma, Verdana, Arial, sans-serif;
+    font-size: 11px;
+    background-color: #ffffff;
+    border: 2px inset #ffffff;
+}
+input.btn, button {
+    background-color: #c0c0c0;
+    border: 2px outset #ffffff;
+    padding: 1px 10px;
+    font-size: 11px;
+    color: #000000;
+}
+input.btn-primary {
+    font-weight: bold;
+}
+table.form td { padding: 3px 6px; vertical-align: top; }
+.formlabel { font-weight: bold; text-align: right; }
+
+.footer {
+    color: #808080;
+    font-size: 10px;
+    padding: 6px 10px;
+}

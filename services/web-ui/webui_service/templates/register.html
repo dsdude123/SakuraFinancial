@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ account.name }}{% endblock %}
+{% block content %}
+<h1>{{ account.name }}
+  <span class="titlebar-sub">{{ account.type }} &middot; {{ account.currency_code }} &middot;
+  balance <b>{{ account.balance|money }}</b></span></h1>
+
+{% if account.type in ('asset', 'liability') %}
+  <div class="panel">
+    <b>Update value</b> — records the change as a valuation (net worth moves, monthly cash flow does not).
+    <form method="post" action="/accounts/{{ account.id }}/valuation">
+      Date <input type="text" name="date" size="10" value="{{ today }}">
+      New value <input type="text" name="new_value" size="12">
+      <input type="submit" class="btn btn-primary" value="Save value">
+    </form>
+  </div>
+{% else %}
+  <div class="panel">
+    <b>New transaction</b> — spending is negative (<span class="neg">-45.10</span>), money in is positive.
+    <form method="get" action="/accounts/{{ account.id }}/register">
+      <table class="form" cellpadding="0" cellspacing="0"><tr>
+        <td>Payee:
+          <select name="prefill_payee">
+            <option value="">(pick to auto-fill)</option>
+            {% for p in payees %}
+              <option value="{{ p.id }}" {% if prefill and prefill.id == p.id %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="submit" class="btn" value="Fill &#8595;">
+          <span class="dim small">fills category &amp; last amount below</span>
+        </td>
+      </tr></table>
+    </form>
+    <form method="post" action="/accounts/{{ account.id }}/register">
+      <table class="form" cellpadding="0" cellspacing="0">
+        <tr>
+          <td>Date<br><input type="text" name="date" size="10" value="{{ today }}"></td>
+          <td>Payee<br>
+            <select name="payee_id">
+              <option value="">(none)</option>
+              {% for p in payees %}
+                <option value="{{ p.id }}" {% if prefill and prefill.id == p.id %}selected{% endif %}>{{ p.name }}</option>
+              {% endfor %}
+            </select></td>
+          <td>&nbsp;or new payee<br><input type="text" name="new_payee" size="16"></td>
+          <td>Category<br>
+            <select name="category_id">
+              <option value="">(uncategorized)</option>
+              {% for c in categories %}
+                <option value="{{ c.id }}"
+                  {% if prefill and (prefill.last_category_id == c.id or (not prefill.last_category_id and prefill.default_category_id == c.id)) %}selected{% endif %}
+                >{{ c.name }} ({{ c.kind }})</option>
+              {% endfor %}
+            </select></td>
+          <td>Amount<br><input type="text" name="amount" size="10"
+                value="{% if prefill and prefill.last_amount %}{{ prefill.last_amount }}{% endif %}"></td>
+          <td>Memo<br><input type="text" name="memo" size="18"></td>
+          <td><br><input type="submit" class="btn btn-primary" value="Enter"></td>
+        </tr>
+      </table>
+    </form>
+  </div>
+
+  <div class="panel">
+    <b>Transfer</b>
+    <form method="post" action="/accounts/{{ account.id }}/transfer">
+      Date <input type="text" name="date" size="10" value="{{ today }}">
+      <select name="direction">
+        <option value="out">to</option>
+        <option value="in">from</option>
+      </select>
+      <select name="other_account_id">
+        {% for a in accounts %}<option value="{{ a.id }}">{{ a.name }} ({{ a.currency_code }})</option>{% endfor %}
+      </select>
+      Amount <input type="text" name="amount" size="10">
+      <span class="dim small">other side (cross-currency):</span> <input type="text" name="to_amount" size="10">
+      Memo <input type="text" name="memo" size="12">
+      <input type="submit" class="btn" value="Transfer">
+    </form>
+  </div>
+{% endif %}
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr>
+    <th>Date</th><th>St</th><th>Payee / Memo</th><th>Category</th>
+    <th class="num">Payment</th><th class="num">Deposit</th><th class="num">Balance</th><th></th>
+  </tr>
+  {% for t in txns %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ t.date }}</td>
+    <td class="small dim">{% if t.status == 'cleared' %}C{% elif t.status == 'reconciled' %}R{% endif %}</td>
+    <td>
+      {% if t.kind == 'transfer' %}&#8646; {% elif t.kind == 'valuation' %}&#9878; {% endif
+      %}{% if t.payee_name %}<b>{{ t.payee_name }}</b>{% endif %}
+      {% if t.memo %}<span class="dim">{{ t.memo }}</span>{% endif %}
+    </td>
+    <td>
+      {% if t.kind == 'transfer' %}<span class="chip">Transfer</span>
+      {% elif t.kind == 'valuation' %}<span class="chip">Value change</span>
+      {% elif t.splits|length > 1 %}
+        {% for s in t.splits %}{{ s.category_name or '(uncategorized)' }} {{ s.amount|money }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+      {% else %}
+        {{ t.splits[0].category_name or '(uncategorized)' }}
+      {% endif %}
+    </td>
+    <td class="num neg">{% if t.total is negative %}{{ t.total|money }}{% endif %}</td>
+    <td class="num pos">{% if not (t.total is negative) %}{{ t.total|money }}{% endif %}</td>
+    <td class="num {% if t.running_balance is negative %}neg{% endif %}">{{ t.running_balance|money }}</td>
+    <td class="small"><a href="/transactions/{{ t.id }}/edit">edit</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="8" class="dim">No transactions yet. Enter one above or <a href="/import">import a CSV</a>.</td></tr>
+  {% endfor %}
+</table>
+
+<p>
+  {% if offset > 0 %}<a href="/accounts/{{ account.id }}/register?offset={{ offset - limit }}">&laquo; Newer</a>{% endif %}
+  {% if txns|length == limit %}&nbsp;<a href="/accounts/{{ account.id }}/register?offset={{ offset + limit }}">Older &raquo;</a>{% endif %}
+</p>
+{% endblock %}
