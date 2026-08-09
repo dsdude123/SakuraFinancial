@@ -61,13 +61,27 @@ def create_app(clients: Clients | None = None, secret_key: str | None = None) ->
         auth_pages,
         bills,
         budget,
+        charts,
         home,
         imports,
+        monthly,
+        reports,
         setup,
         settings_pages,
     )
 
     app.include_router(auth_pages.router)
-    for module in (home, accounts, bills, budget, imports, setup, settings_pages):
+    for module in (
+        home,
+        accounts,
+        bills,
+        budget,
+        imports,
+        monthly,
+        reports,
+        charts,
+        setup,
+        settings_pages,
+    ):
         app.include_router(module.router)
     return app

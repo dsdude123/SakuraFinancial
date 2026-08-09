@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block subtitle %}cash flow{% endblock %}
+{% block content %}
+<h1>Cash flow</h1>
+
+<div class="panel" align="center">
+  <img src="/charts/cashflow.png?months={{ months }}" width="720" height="340" alt="Cash flow bar chart">
+</div>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Month</th><th class="num">Income</th><th class="num">Spending</th><th class="num">Net</th></tr>
+  {% for row in series %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ row.month }}</td>
+    <td class="num pos">{{ row.income|money }}</td>
+    <td class="num">{{ row.spending|money }}</td>
+    <td class="num {% if row.net is negative %}neg{% else %}pos{% endif %}"><b>{{ row.net|money }}</b></td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small dim">Cash accounts only. Transfers between your own accounts and
+asset value changes (like a car depreciating) are never counted — this is
+strictly money in vs money out.</p>
+<p>
+  Show:
+  <a href="/reports/cashflow?months=6">6 months</a> |
+  <a href="/reports/cashflow?months=12">12 months</a> |
+  <a href="/reports/cashflow?months=24">24 months</a>
+</p>
+{% endblock %}
