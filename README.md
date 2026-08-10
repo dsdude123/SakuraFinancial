@@ -52,6 +52,22 @@ reading this repo.
 Optional environment overrides: `WEBUI_PORT` to publish the UI on a different
 port, `SECRET_KEY` if you'd rather manage the session key yourself.
 
+### Running the published images
+
+Every service is published to GHCR as
+`ghcr.io/<owner>/sakurafinancial-<service>` (settings, ledger, budget, stocks,
+receipts, web-ui). To run those instead of building locally — the Portainer
+path — use:
+
+```sh
+SAKURA_OWNER=dsdude123 docker compose -f docker-compose.ghcr.yml up -d
+```
+
+`SAKURA_TAG` pins a version (`latest` by default). Tags published:
+`latest` and `main` from the default branch, `pr-<n>` for open pull requests,
+`sha-<short>` per commit, and full semver (`1.2.3`, `1.2`, `1`) when you push
+a `v*.*.*` tag.
+
 > The UI is served over plain HTTP on your LAN because IE6 on Windows 98
 > cannot negotiate modern TLS. Do not expose the port to the internet; see
 > `docs/runbook.md`.

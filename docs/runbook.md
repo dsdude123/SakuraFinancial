@@ -99,9 +99,31 @@ From a Postgres dump instead:
   "DELETE FROM settings WHERE key='ui.password_hash';"` — the next visit
   prompts you to set a new one.
 
+## Container images
+
+CI publishes one image per service to GHCR
+(`ghcr.io/<owner>/sakurafinancial-<service>`) on every push to `main` and on
+`v*.*.*` tags; pull requests get a single mutable `pr-<n>` tag that is deleted
+automatically when the PR closes. `docker-compose.ghcr.yml` runs the stack from
+those images rather than building locally:
+
+```sh
+SAKURA_OWNER=<github-owner> SAKURA_TAG=v1.2.3 \
+  docker compose -f docker-compose.ghcr.yml up -d
+```
+
+To cut a release, tag the commit: `git tag v1.2.3 && git push origin v1.2.3`.
+The `latest` tag only moves for builds of the repository's **default branch**,
+so make sure that is `main`.
+
+If the cleanup workflow logs a 403 deleting a `pr-<n>` image, GitHub is
+refusing `GITHUB_TOKEN` for a user-owned package: create a classic PAT with
+`delete:packages` and save it as the `GHCR_CLEANUP_TOKEN` repository secret.
+
 ## Upgrades
 
-`git pull && docker compose up --build -d`. Schema changes ship as SQLAlchemy
+`git pull && docker compose up --build -d` (or pull new images and
+`docker compose -f docker-compose.ghcr.yml up -d`). Schema changes ship as SQLAlchemy
 model changes applied on service startup for new tables; destructive
 migrations will be called out in release notes with explicit steps. Take a
 backup (both kinds) first, always.

@@ -1,0 +1,116 @@
+# Run SakuraFinancial from the images published to GHCR instead of building
+# locally — the file to paste into Portainer, or to use on a server that has no
+# checkout of this repository:
+#
+#     SAKURA_OWNER=dsdude123 docker compose -f docker-compose.ghcr.yml up -d
+#
+# Set SAKURA_TAG to pin a release (e.g. v1.2.3); it defaults to latest.
+#
+# Everything else matches docker-compose.yml: no configuration required, the
+# database is private to this stack, and only the web UI publishes a port.
+#
+# NOTE: the db init script lives in this repository, so a from-scratch start
+# with this file needs infra/postgres-init/ next to it. Portainer's "Repository"
+# deployment method handles that for you by checking the repo out first.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: sakura_internal_postgres
+      SETTINGS_DB_PASSWORD: sakura_internal_settings
+      LEDGER_DB_PASSWORD: sakura_internal_ledger
+      BUDGET_DB_PASSWORD: sakura_internal_budget
+      STOCKS_DB_PASSWORD: sakura_internal_stocks
+      RECEIPTS_DB_PASSWORD: sakura_internal_receipts
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  settings:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-settings:${SAKURA_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_settings:sakura_internal_settings@db:5432/sakura_settings
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ledger:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-ledger:${SAKURA_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_ledger:sakura_internal_ledger@db:5432/sakura_ledger
+      SETTINGS_URL: http://settings:8005
+      RECEIPTS_URL: http://receipts:8004
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  budget:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-budget:${SAKURA_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_budget:sakura_internal_budget@db:5432/sakura_budget
+      LEDGER_URL: http://ledger:8001
+      SETTINGS_URL: http://settings:8005
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  stocks:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-stocks:${SAKURA_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_stocks:sakura_internal_stocks@db:5432/sakura_stocks
+      SETTINGS_URL: http://settings:8005
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  receipts:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-receipts:${SAKURA_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_receipts:sakura_internal_receipts@db:5432/sakura_receipts
+      SETTINGS_URL: http://settings:8005
+      LEDGER_URL: http://ledger:8001
+      RECEIPTS_DATA_DIR: /data/receipts
+    volumes:
+      - receipts_data:/data/receipts
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  webui:
+    image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-web-ui:${SAKURA_TAG:-latest}
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}
+      WEBUI_DATA_DIR: /data/webui
+      SETTINGS_URL: http://settings:8005
+      LEDGER_URL: http://ledger:8001
+      BUDGET_URL: http://budget:8002
+      STOCKS_URL: http://stocks:8003
+      RECEIPTS_URL: http://receipts:8004
+    volumes:
+      - webui_data:/data/webui
+    ports:
+      - "${WEBUI_PORT:-8000}:8000"
+    depends_on:
+      - settings
+      - ledger
+      - budget
+      - stocks
+      - receipts
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  receipts_data:
+  webui_data:
