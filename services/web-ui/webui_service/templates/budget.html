@@ -23,16 +23,22 @@ across the tracked months. Future months need to come in under budget to recover
         <th class="num">Spent</th><th class="num">Available</th><th>Set</th></tr>
     {% for row in view.categories %}
     <tr class="{{ loop.cycle('odd', 'even') }}">
-      <td>{{ row.name }}{% if row.over %} <span class="chip chip-bad">over</span>{% endif %}</td>
-      <td class="num">{{ row.budgeted|money }}</td>
+      <td>
+        {% if row.depth %}&nbsp;&nbsp;&nbsp;&#8627; {% endif %}{{ row.name }}
+        {% if row.is_subtotal %}<span class="chip">subtotal</span>{% endif %}
+        {% if row.over %}<span class="chip chip-bad">over</span>{% endif %}
+      </td>
+      <td class="num {% if row.is_subtotal %}dim{% endif %}">{{ row.budgeted|money }}</td>
       <td class="num {% if row.carry_in is negative %}neg{% endif %}">{{ row.carry_in|money }}</td>
       <td class="num">{{ row.spent|money }}</td>
-      <td class="num {% if row.available is negative %}neg{% else %}pos{% endif %}"><b>{{ row.available|money }}</b></td>
+      <td class="num {% if row.available is none %}dim{% elif row.available is negative %}neg{% else %}pos{% endif %}">
+        {% if row.available is none %}&mdash;{% else %}<b>{{ row.available|money }}</b>{% endif %}
+      </td>
       <td>
         {% if row.category_id %}
         <form method="post" action="/budget/{{ month }}/set">
           <input type="hidden" name="category_id" value="{{ row.category_id }}">
-          <input type="text" name="amount" size="8" value="{{ row.budgeted }}">
+          <input type="text" name="amount" size="8" value="{{ row.budgeted if not row.is_subtotal else '' }}">
           <input type="submit" class="btn" value="Save">
         </form>
         {% endif %}
@@ -54,7 +60,7 @@ across the tracked months. Future months need to come in under budget to recover
     <b>Add a category to this month's budget</b>
     <form method="post" action="/budget/{{ month }}/set">
       <select name="category_id">
-        {% for c in addable %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+        {% for c in addable %}<option value="{{ c.id }}">{{ c.path }}</option>{% endfor %}
       </select>
       Amount <input type="text" name="amount" size="8">
       <input type="submit" class="btn" value="Add">
@@ -65,6 +71,11 @@ across the tracked months. Future months need to come in under budget to recover
   </div>
   <p class="small dim">Deficits (red) carry into next month until you spend under
   budget. Leftovers don't pad next month's category — they land in the General Fund.</p>
+  <p class="small dim">Subcategories: budget the parent (<b>Food</b>) and its
+  children's spending counts against it, or budget the children individually
+  and the parent becomes a read-only <span class="chip">subtotal</span>. A child
+  with no budget of its own shows its spending but no deficit — the parent's
+  envelope owns it.</p>
 </td>
 <td width="40%" valign="top" style="padding-left: 12px">
   <h2>Where {{ month }}'s income went</h2>

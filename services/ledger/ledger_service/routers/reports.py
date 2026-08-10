@@ -17,9 +17,21 @@ def category_actuals(
     end: date,
     db: Session = Depends(get_db),
 ):
-    """Net per category over [start, end]. Normal transactions in cash-flow
-    accounts only; reimbursements net against their category."""
+    """Net per category over [start, end], one flat row per category. Normal
+    transactions in cash-flow accounts only; reimbursements net against their
+    category."""
     return reports.category_actuals(db, start, end)
+
+
+@router.get("/category-tree")
+def category_tree(
+    start: date,
+    end: date,
+    db: Session = Depends(get_db),
+):
+    """The same data rolled up: parents carry their own spending plus their
+    children's, with children nested. Powers the drill-down spending report."""
+    return reports.category_tree(db, start, end)
 
 
 @router.get("/cashflow")

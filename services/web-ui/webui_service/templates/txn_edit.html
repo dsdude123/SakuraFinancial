@@ -56,7 +56,7 @@
           <select name="split_category_{{ i }}">
             <option value="">(uncategorized)</option>
             {% for c in categories %}
-              <option value="{{ c.id }}" {% if s and s.category_id == c.id %}selected{% endif %}>{{ c.name }} ({{ c.kind }})</option>
+              <option value="{{ c.id }}" {% if s and s.category_id == c.id %}selected{% endif %}>{{ c.path }} ({{ c.kind }})</option>
             {% endfor %}
           </select>
         </td>

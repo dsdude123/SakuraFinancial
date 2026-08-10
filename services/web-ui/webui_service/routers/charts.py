@@ -53,20 +53,44 @@ def style_axes(axes) -> None:
 
 
 @router.get("/charts/spending.png")
-async def spending_chart(request: Request, month: str):
+async def spending_chart(request: Request, month: str, detail: str = ""):
+    """Slices are top-level groups by default (Food as one wedge); pass
+    ``detail=<parent category id>`` to break that group into its children."""
     year, mon = (int(part) for part in month.split("-"))
     start = dt.date(year, mon, 1)
     end = (start.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
-    actuals = await request.app.state.clients.ledger.get(
-        "/api/reports/category-actuals",
+    tree = await request.app.state.clients.ledger.get(
+        "/api/reports/category-tree",
         params={"start": start.isoformat(), "end": end.isoformat()},
     )
+    expense_nodes = [node for node in tree if node["kind"] == "expense"]
+    title = f"Spending by category — {month}"
+    if detail.strip().isdigit():
+        parent = next(
+            (node for node in expense_nodes if node["category_id"] == int(detail)), None
+        )
+        if parent is not None:
+            title = f"{parent['name']} — {month}"
+            slices = [
+                (child["name"], -Decimal(child["net"]))
+                for child in parent["children"]
+                if Decimal(child["net"]) < 0
+            ]
+            own = -Decimal(parent["own_net"])
+            if own > 0:
+                slices.append((f"(direct)", own))
+            slices.sort(key=lambda item: item[1], reverse=True)
+            return _pie(slices, title)
     slices = [
-        (row["name"], -Decimal(row["net"]))
-        for row in actuals
-        if row["kind"] == "expense" and Decimal(row["net"]) < 0
+        (node["name"], -Decimal(node["net"]))
+        for node in expense_nodes
+        if Decimal(node["net"]) < 0
     ]
     slices.sort(key=lambda item: item[1], reverse=True)
+    return _pie(slices, title)
+
+
+def _pie(slices: list[tuple[str, Decimal]], title: str) -> Response:
     figure = new_figure(6.0, 3.6)
     axes = figure.add_subplot()
     if slices:
@@ -85,7 +109,7 @@ async def spending_chart(request: Request, month: str):
     else:
         axes.text(0.5, 0.5, "No spending this month", ha="center", fontsize=10, color="#808080")
         axes.set_axis_off()
-    figure.suptitle(f"Spending by category — {month}", fontsize=10, color=NAVY)
+    figure.suptitle(title, fontsize=10, color=NAVY)
     figure.subplots_adjust(left=0.02, right=0.62)
     return to_png(figure)
 

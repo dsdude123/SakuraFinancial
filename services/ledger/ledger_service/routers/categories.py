@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import CATEGORY_KINDS, Category, DEFAULT_CATEGORIES, Payee, Split
-from ..serialize import category_dict
+from ..serialize import category_dict, category_sort_key
 
 router = APIRouter(prefix="/api", tags=["categories"])
 
@@ -26,10 +26,13 @@ class CategoryUpdate(BaseModel):
 
 @router.get("/categories")
 def list_categories(include_inactive: bool = False, db: Session = Depends(get_db)):
-    query = select(Category).order_by(Category.kind, Category.name)
+    """Ordered so each parent is immediately followed by its children, which
+    is the order every picker in the UI wants to render."""
+    query = select(Category)
     if not include_inactive:
         query = query.where(Category.active)
-    return [category_dict(c) for c in db.execute(query).scalars().all()]
+    categories = sorted(db.execute(query).scalars().all(), key=category_sort_key)
+    return [category_dict(c) for c in categories]
 
 
 @router.post("/categories")
@@ -108,9 +111,14 @@ def seed_defaults(db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(409, "categories already exist — refusing to seed defaults")
     created = 0
-    for kind, names in DEFAULT_CATEGORIES.items():
-        for name in names:
-            db.add(Category(name=name, kind=kind))
+    for kind, entries in DEFAULT_CATEGORIES.items():
+        for name, children in entries.items():
+            parent = Category(name=name, kind=kind)
+            db.add(parent)
+            db.flush()
             created += 1
+            for child in children or []:
+                db.add(Category(name=child, kind=kind, parent_id=parent.id))
+                created += 1
     db.commit()
     return {"created": created}

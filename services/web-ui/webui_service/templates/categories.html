@@ -57,10 +57,14 @@
     Parent
     <select name="parent_id">
       <option value="">(top level)</option>
-      {% for c in parents %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+      {% for c in parents %}<option value="{{ c.id }}">{{ c.name }} ({{ c.kind }})</option>{% endfor %}
     </select>
     <input type="submit" class="btn btn-primary" value="Create">
   </form>
+  <p class="small dim">Pick a parent to make a subcategory — e.g. <b>Food</b>
+  with <b>Groceries</b> and <b>Dining Out</b> under it. Reports total the parent
+  and let you drill into the children, and you can budget at either level.
+  Subcategories go one level deep and must match their parent's kind.</p>
   <p class="small dim">Reimbursements need no special category: post the incoming
   money against the expense category (e.g. Rent) and it reduces that category's
   spending. Categories in use can be deactivated but never deleted.</p>

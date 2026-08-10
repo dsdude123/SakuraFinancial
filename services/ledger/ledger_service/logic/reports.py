@@ -29,6 +29,7 @@ from ..models import (
     Split,
     Transaction,
 )
+from ..serialize import category_path
 from . import fx
 from .balances import account_balance
 
@@ -74,6 +75,64 @@ def category_actuals(db: Session, start: date, end: date) -> list[dict]:
         )
     result.sort(key=lambda row: (row["kind"], row["name"]))
     return result
+
+
+def category_tree(db: Session, start: date, end: date) -> list[dict]:
+    """Category actuals rolled up one level: each parent reports its own
+    direct spending plus its children's, with the children nested underneath.
+
+    This is what makes subcategories worth having — "Food -1,050.00" broken
+    into Groceries and Dining Out, instead of two unrelated rows.
+    """
+    flat = {row["category_id"]: row for row in category_actuals(db, start, end)}
+    categories = {c.id: c for c in db.execute(select(Category)).scalars()}
+
+    # Every category that has activity, plus the parents of any active child
+    # (a parent with no direct spending of its own still needs a total row).
+    involved: set[int | None] = set(flat)
+    for category_id in list(flat):
+        category = categories.get(category_id)
+        if category is not None and category.parent_id is not None:
+            involved.add(category.parent_id)
+
+    def net_of(category_id) -> Decimal:
+        row = flat.get(category_id)
+        return Decimal(row["net"]) if row else ZERO
+
+    nodes: list[dict] = []
+    for category_id in involved:
+        category = categories.get(category_id)
+        if category is not None and category.parent_id is not None:
+            continue  # children are attached to their parent below
+        children = [
+            {
+                "category_id": child_id,
+                "name": categories[child_id].name,
+                "path": category_path(categories[child_id]),
+                "kind": categories[child_id].kind,
+                "net": money_str(net_of(child_id)),
+            }
+            for child_id in involved
+            if child_id is not None
+            and categories.get(child_id) is not None
+            and categories[child_id].parent_id == category_id
+        ]
+        children.sort(key=lambda row: row["name"].lower())
+        own = net_of(category_id)
+        total = own + sum((Decimal(child["net"]) for child in children), ZERO)
+        nodes.append(
+            {
+                "category_id": category_id,
+                "name": category.name if category else "(uncategorized)",
+                "path": category_path(category),
+                "kind": category.kind if category else ("income" if total > 0 else "expense"),
+                "own_net": money_str(own),
+                "net": money_str(total),
+                "children": children,
+            }
+        )
+    nodes.sort(key=lambda row: (row["kind"], row["name"].lower()))
+    return nodes
 
 
 def cashflow_by_month(db: Session, months: int, end: date | None = None) -> list[dict]:

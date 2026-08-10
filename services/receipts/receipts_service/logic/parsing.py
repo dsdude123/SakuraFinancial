@@ -50,7 +50,11 @@ def parse_document(
         )
         return document
 
-    category_names = [c["name"] for c in categories if c.get("kind") == "expense"]
+    # Offer the LLM full paths ("Food: Groceries") so it can pick the specific
+    # subcategory instead of guessing between same-named leaves.
+    category_names = [
+        c.get("path") or c["name"] for c in categories if c.get("kind") == "expense"
+    ]
     prompt = (
         f"CATEGORY LIST: {', '.join(category_names) or '(none defined yet)'}\n\n"
         f"FILENAME: {document.filename}\n\n"
@@ -94,7 +98,14 @@ def parse_document(
     if data.get("currency"):
         document.currency = str(data["currency"])[:3].upper()
 
-    by_name = {c["name"].lower(): c["id"] for c in categories}
+    # Resolve a guess against the full path first, then the bare leaf name, so
+    # both "Food: Groceries" and "Groceries" land on the right category.
+    by_name: dict[str, int] = {}
+    for c in categories:
+        by_name.setdefault(c["name"].lower(), c["id"])
+    for c in categories:
+        if c.get("path"):
+            by_name[c["path"].lower()] = c["id"]
     document.items.clear()
     for item in data.get("items") or []:
         try:

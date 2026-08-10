@@ -97,7 +97,7 @@
         <td class="formlabel">Category:</td>
         <td><select name="category_id">
           <option value="">(none)</option>
-          {% for c in categories %}{% if c.kind == 'expense' %}<option value="{{ c.id }}">{{ c.name }}</option>{% endif %}{% endfor %}
+          {% for c in categories %}{% if c.kind == 'expense' %}<option value="{{ c.id }}">{{ c.path }}</option>{% endif %}{% endfor %}
         </select></td>
       </tr>
       <tr>

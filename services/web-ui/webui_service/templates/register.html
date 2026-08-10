@@ -49,7 +49,7 @@
               {% for c in categories %}
                 <option value="{{ c.id }}"
                   {% if prefill and (prefill.last_category_id == c.id or (not prefill.last_category_id and prefill.default_category_id == c.id)) %}selected{% endif %}
-                >{{ c.name }} ({{ c.kind }})</option>
+                >{{ c.path }} ({{ c.kind }})</option>
               {% endfor %}
             </select></td>
           <td>Amount<br><input type="text" name="amount" size="10"

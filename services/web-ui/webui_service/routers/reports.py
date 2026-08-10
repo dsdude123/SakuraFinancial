@@ -19,23 +19,28 @@ async def reports_home(request: Request):
 
 
 @router.get("/reports/spending")
-async def spending_report(request: Request, month: str | None = None):
+async def spending_report(request: Request, month: str | None = None, detail: str = ""):
     month = month or dt.date.today().strftime("%Y-%m")
     year, mon = (int(part) for part in month.split("-"))
     start = dt.date(year, mon, 1)
     end = (start.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
-    actuals = await request.app.state.clients.ledger.get(
-        "/api/reports/category-actuals",
+    tree = await request.app.state.clients.ledger.get(
+        "/api/reports/category-tree",
         params={"start": start.isoformat(), "end": end.isoformat()},
     )
-    expense_rows = [row for row in actuals if row["kind"] == "expense"]
-    income_rows = [row for row in actuals if row["kind"] == "income"]
-    total_spent = sum((-Decimal(row["net"]) for row in expense_rows), Decimal("0"))
-    for row in expense_rows:
-        spent = -Decimal(row["net"])
-        row["spent"] = str(spent)
-        row["pct"] = int(spent / total_spent * 100) if total_spent > 0 and spent > 0 else 0
-    expense_rows.sort(key=lambda row: Decimal(row["spent"]), reverse=True)
+    expense_rows = [node for node in tree if node["kind"] == "expense"]
+    income_rows = [node for node in tree if node["kind"] == "income"]
+    total_spent = sum((-Decimal(node["net"]) for node in expense_rows), Decimal("0"))
+    for node in expense_rows:
+        spent = -Decimal(node["net"])
+        node["spent"] = str(spent)
+        node["pct"] = int(spent / total_spent * 100) if total_spent > 0 and spent > 0 else 0
+        node["own_spent"] = str(-Decimal(node["own_net"]))
+        for child in node["children"]:
+            child["spent"] = str(-Decimal(child["net"]))
+    expense_rows.sort(key=lambda node: Decimal(node["spent"]), reverse=True)
+    for node in expense_rows:
+        node["children"].sort(key=lambda child: Decimal(child["spent"]), reverse=True)
     prev_month, next_month = month_nav(month)
     return render(
         request,
@@ -47,6 +52,7 @@ async def spending_report(request: Request, month: str | None = None):
             "expense_rows": expense_rows,
             "income_rows": income_rows,
             "total_spent": str(total_spent),
+            "detail": detail if detail.strip().isdigit() else "",
         },
     )
 

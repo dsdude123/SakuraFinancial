@@ -305,21 +305,22 @@ DEFAULT_CURRENCIES = [
 ]
 
 # Starter categories offered on first run (POST /api/seed-defaults).
-DEFAULT_CATEGORIES = {
-    "income": ["Salary", "Interest", "Other Income"],
-    "expense": [
-        "Rent",
-        "Groceries",
-        "Dining Out",
-        "Utilities",
-        "Transportation",
-        "Insurance",
-        "Medical",
-        "Entertainment",
-        "Shopping",
-        "Travel",
-        "Subscriptions",
-        "Fees",
-        "Miscellaneous",
-    ],
+# A value of None is a plain category; a list creates subcategories under it,
+# so spending rolls up ("Food" total, broken into Groceries vs Dining Out).
+DEFAULT_CATEGORIES: dict[str, dict[str, list[str] | None]] = {
+    "income": {"Salary": None, "Interest": None, "Other Income": None},
+    "expense": {
+        "Rent": None,
+        "Food": ["Groceries", "Dining Out", "Coffee"],
+        "Utilities": ["Electric", "Gas", "Water", "Internet"],
+        "Transportation": ["Fuel", "Transit", "Parking", "Maintenance"],
+        "Insurance": None,
+        "Medical": None,
+        "Entertainment": None,
+        "Shopping": None,
+        "Travel": None,
+        "Subscriptions": None,
+        "Fees": None,
+        "Miscellaneous": None,
+    },
 }

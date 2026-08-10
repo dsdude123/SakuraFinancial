@@ -31,7 +31,11 @@ def category_dict(category: Category) -> dict:
     return {
         "id": category.id,
         "name": category.name,
+        # Full "Food: Groceries" label — what every picker should display, so
+        # a subcategory is never mistaken for a top-level one.
+        "path": category_path(category),
         "parent_id": category.parent_id,
+        "parent_name": category.parent.name if category.parent else None,
         "kind": category.kind,
         "active": category.active,
     }
@@ -43,6 +47,13 @@ def category_path(category: Category | None) -> str:
     if category.parent is not None:
         return f"{category.parent.name}: {category.name}"
     return category.name
+
+
+def category_sort_key(category: Category) -> tuple:
+    """Order categories so children follow their parent: income/expense
+    grouping first, then the parent's name, then parent before children."""
+    top_name = category.parent.name if category.parent else category.name
+    return (category.kind, top_name.lower(), 1 if category.parent else 0, category.name.lower())
 
 
 def payee_dict(payee: Payee, last_amount=None, last_category_id=None) -> dict:

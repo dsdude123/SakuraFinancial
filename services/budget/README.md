@@ -21,6 +21,19 @@ with the register. Live OpenAPI docs at `/docs`.
 3. A month where total outgo exceeds income drains the General Fund; a
    negative General Fund raises the `global_deficit` flag (the UI banner).
 
+### Subcategories: budget at either level
+
+Spending lands in the nearest ancestor that has a budget that month. Budget
+**Food** $800 and Groceries + Dining Out both draw on it; budget the children
+individually and each owns its own envelope while Food becomes a read-only
+**subtotal** row. Mixed works too: a budget on Groceries wins for grocery
+spending while Dining Out still falls through to Food.
+
+A child with no envelope of its own reports what was spent but never a deficit
+(`is_envelope: false`, `available: null`) — otherwise every subcategory would
+look permanently over budget. Deficits carry on the envelope that owns them,
+and footer totals count each dollar once (subtotal rows never double-count).
+
 History recomputes from the first budgeted month on every request —
 deterministic, nothing stored that can go stale. Reimbursements (inflows on
 expense categories) reduce `spent` automatically because ledger's

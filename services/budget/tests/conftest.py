@@ -14,10 +14,15 @@ class FakeLedger:
     def __init__(self):
         self.actuals: dict[str, list[dict]] = {}
         self.accrual: dict = {"bills": [], "total_monthly_load": "0.00", "by_category": []}
+        # 20 "Food" is a parent of 21 Groceries and 22 Dining Out, so tests can
+        # exercise budgeting at either level.
         self.category_list: list[dict] = [
             {"id": 1, "name": "Rent", "kind": "expense", "parent_id": None, "active": True},
             {"id": 2, "name": "Groceries", "kind": "expense", "parent_id": None, "active": True},
             {"id": 10, "name": "Salary", "kind": "income", "parent_id": None, "active": True},
+            {"id": 20, "name": "Food", "kind": "expense", "parent_id": None, "active": True},
+            {"id": 21, "name": "Groceries", "kind": "expense", "parent_id": 20, "active": True},
+            {"id": 22, "name": "Dining Out", "kind": "expense", "parent_id": 20, "active": True},
         ]
 
     def set_month(self, month: str, income: str = "0", spend: dict[int, str] | None = None):

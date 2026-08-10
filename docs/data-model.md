@@ -19,7 +19,7 @@ mirror these table names; `app models.py` files are the source of truth.
 | currencies | ISO code (PK), name, display decimals. Seeded: USD, CAD, TWD |
 | fx_rates | manual rates (date, from, to, rate); lookups take the latest on/before a date and fall back to the inverse pair |
 | accounts | name, type (`checking, savings, credit_card, cash, asset, liability`), currency, opening_balance, active. The first four types are cash-flow accounts |
-| categories | name, parent (one level), kind (`expense`/`income`) as *default direction* — splits accept both signs so reimbursements net |
+| categories | name, parent (one level: Food → Groceries), kind (`expense`/`income`) as *default direction* — splits accept both signs so reimbursements net. APIs return a `path` ("Food: Groceries") and list parents immediately followed by their children |
 | payees | name, default_category_id (auto-fill), active |
 | payee_aliases | normalized description pattern (`exact`/`prefix`/`contains`) → payee; learned during import review |
 | transactions | account, date, payee, memo, status (`uncleared/cleared/reconciled`), kind (`normal/transfer/valuation`), transfer_group_id (pairs transfer legs), import_hash (dedup) |
@@ -34,7 +34,7 @@ mirror these table names; `app models.py` files are the source of truth.
 
 | table | notes |
 | ----- | ----- |
-| category_budgets | (month, category_id) → planned amount. Category IDs reference the ledger by API, not FK |
+| category_budgets | (month, category_id) → planned amount, set on a parent or a child. Category IDs reference the ledger by API, not FK |
 | goals | name, target_amount, monthly_contribution, target_date, priority, active |
 
 Everything else (spent, carryovers, waterfall, General Fund) is derived from

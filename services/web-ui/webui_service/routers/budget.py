@@ -25,11 +25,17 @@ async def budget_page(request: Request, month: str | None = None):
     month = month or dt.date.today().strftime("%Y-%m")
     view = await clients.budget.get(f"/api/budget/{month}")
     categories = await clients.ledger.get("/api/categories")
-    budgeted_ids = {row["category_id"] for row in view["categories"]}
+    # Rows that already have an editable envelope shouldn't be offered again;
+    # subtotal rows can still be given a budget of their own.
+    has_envelope = {
+        row["category_id"]
+        for row in view["categories"]
+        if row["category_id"] and not row.get("is_subtotal")
+    }
     addable = [
         c
         for c in categories
-        if c["kind"] == "expense" and c["id"] not in budgeted_ids and c["active"]
+        if c["kind"] == "expense" and c["id"] not in has_envelope and c["active"]
     ]
     prev_month, next_month = month_nav(month)
     return render(

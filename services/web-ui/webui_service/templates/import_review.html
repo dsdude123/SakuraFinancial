@@ -45,7 +45,7 @@
           <select name="category_id">
             <option value="">(uncategorized)</option>
             {% for c in categories %}
-              <option value="{{ c.id }}" {% if r.category_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+              <option value="{{ c.id }}" {% if r.category_id == c.id %}selected{% endif %}>{{ c.path }}</option>
             {% endfor %}
           </select>
         {% endif %}

@@ -16,6 +16,13 @@ here. Live OpenAPI docs at `/docs` on the service port.
   each split points at a category (or none, for uncategorized). Splitting a
   grocery receipt across categories re-divides ONE transaction — never
   creates more.
+- **Subcategories:** categories nest one level (Food → Groceries, Dining Out).
+  Children must match their parent's kind. APIs return a `path`
+  ("Food: Groceries") for display and list parents immediately followed by
+  their children. `GET /api/reports/category-tree` rolls children up into
+  their parent's total (with the parent's own direct spending kept separately
+  as `own_net`), which is what drives the drill-down spending report;
+  `/api/reports/category-actuals` still returns flat per-category rows.
 - **Reimbursements:** categories have a default direction (`kind`) but accept
   both signs. An inflow against "Rent" reduces net Rent spending in every
   report — this is deliberate and central.
