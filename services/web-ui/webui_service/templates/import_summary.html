@@ -13,7 +13,7 @@
 
 {% if summary.amount_review %}
 <div class="warnpanel">
-  <b>&#9888; Fixed bills were charged different amounts.</b> Decide for each:
+  <b>(!) Fixed bills were charged different amounts.</b> Decide for each:
   <table class="data" cellpadding="0" cellspacing="0">
     <tr><th>Bill</th><th>Due</th><th class="num">Expected</th><th class="num">Charged</th><th>Decide</th></tr>
     {% for m in summary.amount_review %}

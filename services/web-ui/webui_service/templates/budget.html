@@ -10,7 +10,7 @@
 </h1>
 
 {% if view.global_deficit %}
-<div class="err"><b>&#9888; Overall deficit.</b> Your General Fund is at
+<div class="err"><b>(!) Overall deficit.</b> Your General Fund is at
 {{ view.waterfall.general_fund_total|money }} — you've spent more than you've earned
 across the tracked months. Future months need to come in under budget to recover.</div>
 {% endif %}
@@ -24,7 +24,7 @@ across the tracked months. Future months need to come in under budget to recover
     {% for row in view.categories %}
     <tr class="{{ loop.cycle('odd', 'even') }}">
       <td>
-        {% if row.depth %}&nbsp;&nbsp;&nbsp;&#8627; {% endif %}{{ row.name }}
+        {% if row.depth %}&nbsp;&nbsp;&nbsp;&#187; {% endif %}{{ row.name }}
         {% if row.is_subtotal %}<span class="chip">subtotal</span>{% endif %}
         {% if row.over %}<span class="chip chip-bad">over</span>{% endif %}
       </td>

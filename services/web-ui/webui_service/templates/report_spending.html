@@ -38,14 +38,14 @@
       {% if row.children %}
         {% if row.own_spent|float %}
         <tr class="{{ loop.cycle('odd', 'even') }}">
-          <td>&nbsp;&nbsp;&nbsp;&#8627; <span class="dim">(directly on {{ row.name }})</span></td>
+          <td>&nbsp;&nbsp;&nbsp;&#187; <span class="dim">(directly on {{ row.name }})</span></td>
           <td class="num">{{ row.own_spent|money }}</td>
           <td></td>
         </tr>
         {% endif %}
         {% for child in row.children %}
         <tr class="{{ loop.cycle('odd', 'even') }}">
-          <td>&nbsp;&nbsp;&nbsp;&#8627; {{ child.name }}</td>
+          <td>&nbsp;&nbsp;&nbsp;&#187; {{ child.name }}</td>
           <td class="num {% if child.spent is negative %}pos{% endif %}">{{ child.spent|money }}</td>
           <td></td>
         </tr>

@@ -28,7 +28,7 @@
       <form method="post" action="/import/rows/{{ r.id }}">
         <input type="hidden" name="batch_id" value="{{ batch.id }}">
         {% if r.status == 'transfer' %}
-          &#8646;
+          &#8596;
           <select name="transfer_account_id">
             {% for a in accounts %}{% if a.id != batch.account_id %}
               <option value="{{ a.id }}" {% if r.transfer_account_id == a.id %}selected{% endif %}>{{ a.name }}</option>

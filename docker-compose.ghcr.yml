@@ -9,23 +9,17 @@
 # Everything else matches docker-compose.yml: no configuration required, the
 # database is private to this stack, and only the web UI publishes a port.
 #
-# NOTE: the db init script lives in this repository, so a from-scratch start
-# with this file needs infra/postgres-init/ next to it. Portainer's "Repository"
-# deployment method handles that for you by checking the repo out first.
+# This file is standalone: unlike docker-compose.yml it needs nothing from the
+# repository next to it, because the db-init service below carries the database
+# bootstrap inline instead of bind-mounting infra/postgres-init/.
 
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: sakura_internal_postgres
-      SETTINGS_DB_PASSWORD: sakura_internal_settings
-      LEDGER_DB_PASSWORD: sakura_internal_ledger
-      BUDGET_DB_PASSWORD: sakura_internal_budget
-      STOCKS_DB_PASSWORD: sakura_internal_stocks
-      RECEIPTS_DB_PASSWORD: sakura_internal_receipts
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -33,13 +27,73 @@ services:
       retries: 20
     restart: unless-stopped
 
+  db-init:
+    # Creates the role and database each service logs in with. This is the same
+    # work infra/postgres-init/ does for docker-compose.yml, moved into a
+    # one-shot service for two reasons: pasting this file somewhere without a
+    # checkout no longer silently produces an empty init directory (and five
+    # services that cannot authenticate), and unlike /docker-entrypoint-initdb.d
+    # — which Postgres reads once, against an empty data directory, and never
+    # again — this runs on every deploy. It is idempotent: it creates what is
+    # missing and resets the password on what exists, so a cluster whose roles
+    # have drifted out of step with this file is repaired rather than being
+    # stuck failing authentication until someone deletes the volume.
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: sakura_internal_postgres
+      SETTINGS_DB_PASSWORD: sakura_internal_settings
+      LEDGER_DB_PASSWORD: sakura_internal_ledger
+      BUDGET_DB_PASSWORD: sakura_internal_budget
+      STOCKS_DB_PASSWORD: sakura_internal_stocks
+      RECEIPTS_DB_PASSWORD: sakura_internal_receipts
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+
+        ensure() {
+          name="sakura_$$1"
+          # Double any quote so a password can never end the SQL string early.
+          pass=$$(printf '%s' "$$2" | sed "s/'/''/g")
+
+          if [ "$$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$$name'")" = 1 ]; then
+            psql -q -c "ALTER ROLE $$name WITH LOGIN PASSWORD '$$pass'"
+          else
+            psql -q -c "CREATE ROLE $$name WITH LOGIN PASSWORD '$$pass'"
+          fi
+
+          if [ "$$(psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$$name'")" != 1 ]; then
+            psql -q -c "CREATE DATABASE $$name OWNER $$name"
+          fi
+          # Owning the database is what lets a service create its own tables on
+          # startup; the REVOKE keeps the other services out of it.
+          psql -q -c "ALTER DATABASE $$name OWNER TO $$name"
+          psql -q -c "REVOKE ALL ON DATABASE $$name FROM PUBLIC"
+          echo "  $$name ready"
+        }
+
+        echo "Bootstrapping SakuraFinancial roles and databases..."
+        ensure settings "$$SETTINGS_DB_PASSWORD"
+        ensure ledger   "$$LEDGER_DB_PASSWORD"
+        ensure budget   "$$BUDGET_DB_PASSWORD"
+        ensure stocks   "$$STOCKS_DB_PASSWORD"
+        ensure receipts "$$RECEIPTS_DB_PASSWORD"
+        echo "Bootstrap complete."
+
   settings:
     image: ghcr.io/${SAKURA_OWNER:-dsdude123}/sakurafinancial-settings:${SAKURA_TAG:-latest}
     environment:
       DATABASE_URL: postgresql+psycopg://sakura_settings:sakura_internal_settings@db:5432/sakura_settings
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   ledger:
@@ -49,8 +103,8 @@ services:
       SETTINGS_URL: http://settings:8005
       RECEIPTS_URL: http://receipts:8004
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   budget:
@@ -60,8 +114,8 @@ services:
       LEDGER_URL: http://ledger:8001
       SETTINGS_URL: http://settings:8005
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   stocks:
@@ -70,8 +124,8 @@ services:
       DATABASE_URL: postgresql+psycopg://sakura_stocks:sakura_internal_stocks@db:5432/sakura_stocks
       SETTINGS_URL: http://settings:8005
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   receipts:
@@ -84,8 +138,8 @@ services:
     volumes:
       - receipts_data:/data/receipts
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   webui:

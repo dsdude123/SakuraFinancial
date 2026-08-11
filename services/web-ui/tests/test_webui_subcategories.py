@@ -44,7 +44,7 @@ class TestCategoryAdmin:
         )
         page = logged_in.get("/categories")
         assert "Food" in page.text
-        assert "&#8627; Groceries" in page.text  # indented under its parent
+        assert "&#187; Groceries" in page.text  # indented under its parent
 
     def test_dropdowns_show_the_full_path(self, logged_in, food_tree):
         register = logged_in.get("/accounts/1/register")
@@ -57,7 +57,7 @@ class TestSpendingReport:
         page = logged_in.get("/reports/spending?month=2026-08")
         assert "850.00" in page.text  # Food total
         assert "600.00" in page.text and "250.00" in page.text  # the breakdown
-        assert "&#8627; Groceries" in page.text
+        assert "&#187; Groceries" in page.text
         assert "break down:" in page.text  # drill-down link row
 
     def test_drill_down_chart_renders(self, logged_in, food_tree):
@@ -84,7 +84,7 @@ class TestBudgetPage:
         assert food_row["available"] == "-50.00"
 
         page = logged_in.get("/budget?month=2026-08")
-        assert "&#8627; Groceries" in page.text
+        assert "&#187; Groceries" in page.text
         assert "over" in page.text
 
     def test_budget_at_children_shows_parent_subtotal(self, logged_in, food_tree):

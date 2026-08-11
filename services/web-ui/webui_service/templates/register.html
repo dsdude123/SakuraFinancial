@@ -90,7 +90,7 @@
     <td>{{ t.date }}</td>
     <td class="small dim">{% if t.status == 'cleared' %}C{% elif t.status == 'reconciled' %}R{% endif %}</td>
     <td>
-      {% if t.kind == 'transfer' %}&#8646; {% elif t.kind == 'valuation' %}&#9878; {% endif
+      {% if t.kind == 'transfer' %}&#8596; {% elif t.kind == 'valuation' %}&#177; {% endif
       %}{% if t.payee_name %}<b>{{ t.payee_name }}</b>{% endif %}
       {% if t.memo %}<span class="dim">{{ t.memo }}</span>{% endif %}
     </td>

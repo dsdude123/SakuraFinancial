@@ -4,7 +4,7 @@
 <h1>Net worth</h1>
 
 {% if missing_rates %}
-<div class="warnpanel">&#9888; No exchange rate for: {{ missing_rates|join(', ') }}.
+<div class="warnpanel">(!) No exchange rate for: {{ missing_rates|join(', ') }}.
 Those accounts are counted 1:1 — add rates on the <a href="/settings">Settings</a> page.</div>
 {% endif %}
 {% if stocks_note %}<div class="warnpanel">{{ stocks_note }}</div>{% endif %}
