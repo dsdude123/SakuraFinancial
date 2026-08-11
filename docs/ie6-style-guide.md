@@ -23,6 +23,17 @@ template lint test in `services/web-ui/tests/test_ie6_lint.py`.
    (MS Sans Serif territory). No web fonts.
 8. Served over plain HTTP on the LAN; IE6 has no modern TLS. Never expose the
    port beyond the LAN.
+9. **No character Windows 98 cannot draw, and no emoji, ever.** Text is ASCII
+   plus Latin-1 plus the handful of WGL4 symbols in the lint's allowlist —
+   arrows, dashes, curly quotes, `»`, `±`, geometric shapes. Writing the
+   character as an HTML entity does not help: `&#127800;` paints the same
+   hollow box as a pasted 🌸, because Win98's fonts have no glyph for it.
+   The lint resolves entities before checking, so both forms fail.
+
+   Emoji is the trap worth naming: the whole set postdates Windows 98 by more
+   than a decade. Where a modern UI reaches for an icon, use what the era had
+   — `(!)` for warnings, `»` for an indented child row, `<->` or `&#8596;` for
+   a transfer, `&#177;` for a value change.
 
 ## Visual style: period-correct, on purpose
 
