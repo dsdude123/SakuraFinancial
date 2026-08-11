@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ account.name }}{% endblock %}
+{% block content %}
+<h1>{{ account.name }}
+  <span class="titlebar-sub">{{ account.type }} &middot; cash {{ account.cash|money }} &middot;
+  total <b>{{ account.total|money }}</b></span></h1>
+
+{% if account.type == 'rsu' and account.trading_window_open %}
+<div class="warnpanel">Trading window: <b>{{ account.trading_window_open }}</b> to
+<b>{{ account.trading_window_close }}</b>. Sales outside the window are usually not allowed.</div>
+{% endif %}
+{% if account.type == 'managed' %}
+<div class="panel">This is a managed portfolio: record cash you put in or take
+out, import statements for holdings, and watch performance. Trade entry and
+analysis are off on purpose — you can't act on them here.</div>
+{% endif %}
+
+<h2>Holdings</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Symbol</th><th class="num">Shares</th><th class="num">Cost basis</th>
+      <th class="num">Last price</th><th class="num">Market value</th><th class="num">Unrealized</th><th></th></tr>
+  {% for h in account.holdings %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><b>{{ h.symbol }}</b></td>
+    <td class="num">{{ h.quantity }}</td>
+    <td class="num">{{ h.cost_basis|money }}</td>
+    <td class="num">{{ h.last_price|money }} <span class="dim small">{{ h.price_date or 'no price' }}</span></td>
+    <td class="num">{{ h.market_value|money }}</td>
+    <td class="num {% if h.unrealized_gain and (h.unrealized_gain is negative) %}neg{% else %}pos{% endif %}">{{ h.unrealized_gain|money }}</td>
+    <td class="small"><a href="/stocks/chart?symbol={{ h.symbol }}">chart</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="7" class="dim">No holdings yet.</td></tr>
+  {% endfor %}
+</table>
+
+{% if account.type != 'managed' %}
+<div class="panel">
+  <form method="post" action="/stocks/accounts/{{ account.id }}/analyze">
+    <input type="submit" class="btn btn-primary" value="Analyze this account (Yahoo + AI)">
+    <span class="small dim">on-demand only; uses your trading instructions from Settings</span>
+  </form>
+  {% if analyses %}
+    Recent:
+    {% for an in analyses %}
+      <a href="/stocks/analyses/{{ an.id }}">{{ an.created_at[:16] }}</a>{% if not loop.last %}, {% endif %}
+    {% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+
+<h2>Record activity</h2>
+<div class="panel">
+  <form method="post" action="/stocks/accounts/{{ account.id }}/transactions">
+    <select name="type">
+      {% if account.type == 'brokerage' %}
+      <option value="buy">buy</option>
+      <option value="sell">sell</option>
+      {% endif %}
+      <option value="deposit">deposit cash</option>
+      <option value="withdraw">withdraw cash</option>
+      <option value="dividend">dividend</option>
+      <option value="fee">fee</option>
+    </select>
+    Date <input type="text" name="date" size="10" value="{{ today }}">
+    Symbol <input type="text" name="symbol" size="6">
+    Qty <input type="text" name="quantity" size="8">
+    Price <input type="text" name="price" size="8">
+    Amount <input type="text" name="amount" size="10">
+    Fees <input type="text" name="fees" size="6">
+    Note <input type="text" name="note" size="12">
+    <input type="submit" class="btn btn-primary" value="Record">
+  </form>
+  <p class="small dim">buy/sell need symbol + qty + price (or total amount);
+  cash moves need just the amount.</p>
+</div>
+
+{% if account.type == 'rsu' %}
+<h2>RSU grants &amp; vesting</h2>
+{% for g in grants %}
+<div class="panel">
+  <b>{{ g.symbol }}</b> granted {{ g.grant_date }} {% if g.note %}<span class="dim">({{ g.note }})</span>{% endif %}
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Vest date</th><th class="num">Shares</th><th>Status</th><th></th></tr>
+    {% for v in g.vesting %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ v.vest_date }}</td>
+      <td class="num">{{ v.shares }}</td>
+      <td>
+        {% if v.released %}<span class="chip chip-ok">released</span>
+        {% elif v.due %}<span class="chip chip-warn">vested — release below</span>
+        {% else %}<span class="chip">future</span>{% endif %}
+      </td>
+      <td>
+        {% if not v.released and v.due %}
+        <form method="post" action="/stocks/vests/{{ v.id }}/release">
+          <input type="hidden" name="account_id" value="{{ account.id }}">
+          price <input type="text" name="price" size="8">
+          <input type="submit" class="btn" value="Release shares">
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<p class="dim">No grants yet.</p>
+{% endfor %}
+
+<h2>New grant</h2>
+<div class="panel">
+  <form method="post" action="/stocks/accounts/{{ account.id }}/grants">
+    Symbol <input type="text" name="symbol" size="6">
+    Grant date <input type="text" name="grant_date" size="10">
+    Note <input type="text" name="note" size="16">
+    <table class="form">
+      {% for i in range(4) %}
+      <tr>
+        <td>Vest date <input type="text" name="vest_date_{{ i }}" size="10"></td>
+        <td>Shares <input type="text" name="vest_shares_{{ i }}" size="8"></td>
+      </tr>
+      {% endfor %}
+    </table>
+    <input type="submit" class="btn btn-primary" value="Save grant">
+    <span class="small dim">need more vest rows? save, then add another grant for the rest</span>
+  </form>
+</div>
+{% endif %}
+
+<h2>Recent activity</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Date</th><th>Type</th><th>Symbol</th><th class="num">Qty</th><th class="num">Price</th>
+      <th class="num">Cash effect</th><th class="num">Realized gain</th><th>Note</th></tr>
+  {% for t in txns %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ t.date }}</td>
+    <td>{{ t.type }}</td>
+    <td>{{ t.symbol or '' }}</td>
+    <td class="num">{{ t.quantity or '' }}</td>
+    <td class="num">{{ t.price|money }}</td>
+    <td class="num {% if t.amount is negative %}neg{% endif %}">{{ t.amount|money }}</td>
+    <td class="num {% if t.realized_gain and (t.realized_gain is negative) %}neg{% elif t.realized_gain %}pos{% endif %}">{{ t.realized_gain|money }}</td>
+    <td class="small dim">{{ t.note }}</td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="8" class="dim">No activity yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

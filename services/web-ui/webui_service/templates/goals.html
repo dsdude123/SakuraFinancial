@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block subtitle %}goals{% endblock %}
+{% block content %}
+<h1>Savings Goals</h1>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Goal</th><th class="num">Target</th><th class="num">Funded</th><th>Progress</th>
+      <th class="num">Monthly</th><th class="num">Priority</th><th>Active</th><th>Change</th></tr>
+  {% for g in goals %}
+  {% set p = progress.get(g.id) %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ g.name }}{% if g.target_date %} <span class="dim small">by {{ g.target_date }}</span>{% endif %}</td>
+    <td class="num">{{ g.target_amount|money }}</td>
+    <td class="num">{% if p %}{{ p.funded_total|money }}{% else %}<span class="dim">—</span>{% endif %}</td>
+    <td>
+      {% if p %}
+      <table cellpadding="0" cellspacing="0" width="100"><tr>
+        <td bgcolor="#000080" width="{{ p.progress_pct }}">&nbsp;</td>
+        <td bgcolor="#ffffff" width="{{ 100 - p.progress_pct }}">&nbsp;</td>
+      </tr></table>
+      <span class="small">{{ p.progress_pct }}%</span>
+      {% endif %}
+    </td>
+    <td class="num">{{ g.monthly_contribution|money }}</td>
+    <td class="num">{{ g.priority }}</td>
+    <td>{% if g.active %}<span class="chip chip-ok">yes</span>{% else %}<span class="chip">paused</span>{% endif %}</td>
+    <td class="small">
+      <form method="post" action="/goals/{{ g.id }}/update">
+        <input type="text" name="monthly_contribution" size="7" value="{{ g.monthly_contribution }}">
+        pri <input type="text" name="priority" size="2" value="{{ g.priority }}">
+        <input type="checkbox" name="active" {% if g.active %}checked{% endif %}> on
+        <input type="submit" class="btn" value="Save">
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="8" class="dim">No goals yet — add one below.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>New goal</h2>
+<div class="panel">
+  <form method="post" action="/goals">
+    <table class="form">
+      <tr>
+        <td class="formlabel">Name:</td><td><input type="text" name="name" size="24"></td>
+        <td class="formlabel">Target:</td><td><input type="text" name="target_amount" size="10"></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Save monthly:</td><td><input type="text" name="monthly_contribution" size="10"></td>
+        <td class="formlabel">Target date:</td><td><input type="text" name="target_date" size="10">
+          <span class="dim small">optional, YYYY-MM-DD</span></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Priority:</td><td><input type="text" name="priority" size="3" value="1">
+          <span class="dim small">1 funds first</span></td>
+        <td></td><td><input type="submit" class="btn btn-primary" value="Create goal"></td>
+      </tr>
+    </table>
+  </form>
+</div>
+<p class="small dim">Goals are funded by the budget waterfall after spending and
+bill set-asides, in priority order, and stop at their target.</p>
+{% endblock %}

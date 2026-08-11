@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block subtitle %}monthly updates {{ month }}{% endblock %}
+{% block content %}
+<h1>Monthly Updates
+  <span class="titlebar-sub">
+    <a href="/monthly?month={{ prev_month }}" style="color: #ffffff">&laquo; {{ prev_month }}</a>
+    &nbsp;<b>{{ month }}</b>&nbsp;
+    <a href="/monthly?month={{ next_month }}" style="color: #ffffff">{{ next_month }} &raquo;</a>
+  </span></h1>
+
+<div class="panel">
+  <b>{{ done }} of {{ total }}</b> bank/cash accounts handled for {{ month }}.
+  {% if reviews_count %}
+    &nbsp;<span class="chip chip-warn">{{ reviews_count }} bill prompt(s) waiting on <a href="/bills">Bills</a></span>
+  {% endif %}
+  {% if receipts_count %}
+    &nbsp;<span class="chip chip-warn">{{ receipts_count }} unlinked receipt(s) in the <a href="/receipts">inbox</a></span>
+  {% endif %}
+</div>
+
+<h2>Bank &amp; cash accounts</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Account</th><th>Status</th><th>Import a statement</th><th>Or</th></tr>
+  {% for item in checklist %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><a href="/accounts/{{ item.account.id }}/register">{{ item.account.name }}</a></td>
+    <td>
+      {% if item.status == 'imported' %}<span class="chip chip-ok">imported</span>
+      {% elif item.status == 'skipped' %}<span class="chip">skipped</span>
+      {% else %}<span class="chip chip-warn">pending</span>{% endif %}
+    </td>
+    <td>
+      {% if item.status != 'skipped' %}
+      <form method="post" action="/import/preview" enctype="multipart/form-data">
+        <select name="profile_id">
+          {% for p in item.profiles %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+        </select>
+        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="file" name="file" size="16">
+        <input type="submit" class="btn" value="Upload">
+      </form>
+      {% endif %}
+    </td>
+    <td>
+      {% if item.status == 'skipped' %}
+      <form method="post" action="/monthly/{{ month }}/unskip">
+        <input type="hidden" name="service" value="ledger">
+        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="submit" class="btn" value="Un-skip">
+      </form>
+      {% else %}
+      <form method="post" action="/monthly/{{ month }}/skip">
+        <input type="hidden" name="service" value="ledger">
+        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="submit" class="btn" value="Skip this month">
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="4" class="dim">No cash-flow accounts yet — <a href="/accounts">create some</a>.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Investment accounts</h2>
+{% if stock_accounts is none %}
+  <p class="dim">Stocks service unavailable.</p>
+{% else %}
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Account</th><th>Type</th><th>Status</th><th></th></tr>
+  {% for item in stock_accounts %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><a href="/stocks">{{ item.account.name }}</a></td>
+    <td>{{ item.account.type }}</td>
+    <td>
+      {% if item.status == 'imported' %}<span class="chip chip-ok">imported</span>
+      {% elif item.status == 'skipped' %}<span class="chip">skipped</span>
+      {% else %}<span class="chip chip-warn">pending</span>{% endif %}
+    </td>
+    <td>
+      {% if item.status == 'skipped' %}
+      <form method="post" action="/monthly/{{ month }}/unskip">
+        <input type="hidden" name="service" value="stocks">
+        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="submit" class="btn" value="Un-skip">
+      </form>
+      {% else %}
+      <form method="post" action="/monthly/{{ month }}/skip">
+        <input type="hidden" name="service" value="stocks">
+        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="submit" class="btn" value="Skip this month">
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="4" class="dim">No investment accounts yet.</td></tr>
+  {% endfor %}
+</table>
+<p class="small dim">Import stock CSVs from the <a href="/stocks">Stocks</a> page.</p>
+{% endif %}
+
+<p class="small dim">"Skip" records that an account has nothing to import this
+month, so the checklist can reach done without pretending. Skips are stored
+per month and can be undone.</p>
+{% endblock %}

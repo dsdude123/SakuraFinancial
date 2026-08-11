@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block subtitle %}backup &amp; restore{% endblock %}
+{% block content %}
+<h1>Backup &amp; Restore</h1>
+
+<h2>Service status</h2>
+<div class="panel">
+  {% for name, ok in reachable.items() %}
+    <span class="chip {% if ok %}chip-ok{% else %}chip-bad{% endif %}">{{ name }}</span>
+  {% endfor %}
+  <p class="small dim">All services must be up for a complete backup or restore.</p>
+</div>
+
+<h2>Download a backup</h2>
+<div class="panel">
+  <p>One zip containing every service's data as <b>human-readable JSON</b>,
+  plus your original receipt files. Readable without SakuraFinancial —
+  that's the point.</p>
+  <a href="/backup/download"><b>&raquo; Download backup zip</b></a>
+  <p class="small dim">Do this after each monthly update session and keep
+  copies OFF this machine. The backup contains your API keys — treat it as
+  sensitive. Nightly database snapshots are also recommended; see
+  docs/runbook.md.</p>
+</div>
+
+<h2>Restore from a backup</h2>
+<div class="warnpanel">
+  <p><b>&#9888; Restore REPLACES all current data in every service.</b>
+  Use it on a fresh stack (disaster recovery) or to roll back deliberately.</p>
+  <form method="post" action="/backup/restore" enctype="multipart/form-data">
+    <input type="file" name="file" size="30">
+    <br><input type="checkbox" name="confirm" id="confirm">
+    <label for="confirm">I understand this replaces everything.</label>
+    <br><input type="submit" class="btn btn-primary" value="Restore now">
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - libs/common
+          - services/settings
+          - services/ledger
+          - services/budget
+          - services/stocks
+          - services/receipts
+          - services/web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e libs/common pytest
+          if [ -f "${{ matrix.target }}/requirements.txt" ]; then
+            pip install -r "${{ matrix.target }}/requirements.txt"
+          fi
+      - name: Run tests
+        run: |
+          if [ -d "${{ matrix.target }}/tests" ]; then
+            python -m pytest "${{ matrix.target }}/tests" -q
+          else
+            echo "No tests yet for ${{ matrix.target }} - failing so it can't be forgotten"
+            exit 1
+          fi
+
+  # Image building lives in docker.yml, which builds all six with layer caching
+  # and publishes them. Repeating `docker compose build` here would double the
+  # work on every PR, so this job only checks the compose file still parses
+  # (which docker.yml does not cover).
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose config -q

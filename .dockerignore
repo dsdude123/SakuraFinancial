@@ -1,0 +1,29 @@
+# Every service builds from the repo root (each Dockerfile copies libs/common
+# alongside its own directory), so keeping the context small speeds up all six
+# builds. Only add exclusions that no Dockerfile needs.
+
+.git
+.github
+.gitignore
+.dockerignore
+
+# Tests and fixtures never ship in an image. libs/common's pyproject packages
+# only sakura_common*, so dropping its tests changes nothing about the install.
+**/tests
+samples
+pytest.ini
+conftest.py
+
+# Local artefacts
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/*.egg-info
+.venv
+venv
+**/*.sqlite3
+.env
+data
+
+docs
+*.md

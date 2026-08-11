@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block subtitle %}review import{% endblock %}
+{% block content %}
+<h1>Review import
+  <span class="titlebar-sub">{{ batch.filename }} &rarr; {{ batch.account_name }}</span></h1>
+
+<div class="panel">
+  {{ batch.total_rows }} rows:
+  {% for status, count in batch.row_counts.items() %}
+    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'needs_payee' %}chip-warn{% elif status == 'duplicate' %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
+  {% endfor %}
+  {% if needs_attention %}
+    <br><span class="small">Rows marked <b>needs_payee</b> will import without payee/category
+    unless you assign one — assigning teaches the system for next month.</span>
+  {% endif %}
+</div>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Date</th><th>Bank description</th><th class="num">Amount</th><th>Status</th>
+      <th>Assign &amp; include</th></tr>
+  {% for r in batch.rows %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ r.date }}</td>
+    <td class="small">{{ r.description }}</td>
+    <td class="num {% if r.amount is negative %}neg{% endif %}">{{ r.amount|money }}</td>
+    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'needs_payee' %}chip-warn{% elif r.status == 'duplicate' %}chip-bad{% endif %}">{{ r.status }}</span></td>
+    <td>
+      <form method="post" action="/import/rows/{{ r.id }}">
+        <input type="hidden" name="batch_id" value="{{ batch.id }}">
+        {% if r.status == 'transfer' %}
+          &#8646;
+          <select name="transfer_account_id">
+            {% for a in accounts %}{% if a.id != batch.account_id %}
+              <option value="{{ a.id }}" {% if r.transfer_account_id == a.id %}selected{% endif %}>{{ a.name }}</option>
+            {% endif %}{% endfor %}
+          </select>
+        {% else %}
+          <select name="payee_id">
+            <option value="">(no payee)</option>
+            {% for p in payees %}
+              <option value="{{ p.id }}" {% if r.payee_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <span class="small dim">or new:</span> <input type="text" name="new_payee" size="10">
+          <select name="category_id">
+            <option value="">(uncategorized)</option>
+            {% for c in categories %}
+              <option value="{{ c.id }}" {% if r.category_id == c.id %}selected{% endif %}>{{ c.path }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+        <input type="checkbox" name="include" {% if r.include %}checked{% endif %}> in
+        <input type="submit" class="btn" value="Save">
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<br>
+<form method="post" action="/import/batches/{{ batch.id }}/commit" style="display: inline">
+  <input type="submit" class="btn btn-primary" value="Import {{ batch.total_rows }} rows now">
+</form>
+<form method="post" action="/import/batches/{{ batch.id }}/abort" style="display: inline">
+  <input type="submit" class="btn" value="Discard everything">
+</form>
+<p class="small dim">Unchecked rows are skipped. Duplicates are unchecked for
+you; re-check one to force it in.</p>
+{% endblock %}

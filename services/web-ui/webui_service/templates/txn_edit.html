@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block subtitle %}edit transaction{% endblock %}
+{% block content %}
+<h1>Edit transaction <span class="titlebar-sub">{{ txn.account_name }} &middot; total {{ txn.total|money }}</span></h1>
+
+<form method="post" action="/transactions/{{ txn.id }}/edit">
+  <input type="hidden" name="split_rows" value="{{ split_rows }}">
+  <div class="panel">
+    <table class="form">
+      <tr>
+        <td class="formlabel">Date:</td>
+        <td><input type="text" name="date" size="10" value="{{ txn.date }}"></td>
+        <td class="formlabel">Status:</td>
+        <td>
+          <select name="status">
+            {% for s in ('uncleared', 'cleared', 'reconciled') %}
+              <option value="{{ s }}" {% if txn.status == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      {% if txn.kind == 'normal' %}
+      <tr>
+        <td class="formlabel">Payee:</td>
+        <td>
+          <select name="payee_id">
+            <option value="">(none)</option>
+            {% for p in payees %}
+              <option value="{{ p.id }}" {% if txn.payee_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td class="formlabel">Memo:</td>
+        <td><input type="text" name="memo" size="30" value="{{ txn.memo }}"></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td class="formlabel">Memo:</td>
+        <td colspan="3"><input type="text" name="memo" size="40" value="{{ txn.memo }}"></td>
+      </tr>
+      {% endif %}
+    </table>
+  </div>
+
+  {% if txn.kind == 'normal' %}
+  <h2>Category split</h2>
+  <div class="panel">
+    <p class="small dim">One transaction, one total ({{ txn.total|money }}) — divide it across
+    categories. Amounts must add up to the total.</p>
+    <table class="form">
+      <tr><td><b>Category</b></td><td><b>Amount</b></td><td><b>Memo</b></td></tr>
+      {% for i in range(split_rows) %}
+      {% set s = txn.splits[i] if i < txn.splits|length else None %}
+      <tr>
+        <td>
+          <select name="split_category_{{ i }}">
+            <option value="">(uncategorized)</option>
+            {% for c in categories %}
+              <option value="{{ c.id }}" {% if s and s.category_id == c.id %}selected{% endif %}>{{ c.path }} ({{ c.kind }})</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input type="text" name="split_amount_{{ i }}" size="10" value="{% if s %}{{ s.amount }}{% endif %}"></td>
+        <td><input type="text" name="split_memo_{{ i }}" size="20" value="{% if s %}{{ s.memo }}{% endif %}"></td>
+      </tr>
+      {% endfor %}
+    </table>
+    <input type="submit" class="btn" name="action_add" value="Add split line">
+  </div>
+  {% endif %}
+
+  <input type="submit" class="btn btn-primary" name="action_save" value="Save changes">
+  <input type="submit" class="btn" name="action_delete" value="Delete transaction">
+  {% if txn.kind == 'transfer' %}<span class="small dim">deleting a transfer removes both sides</span>{% endif %}
+  &nbsp; <a href="/accounts/{{ txn.account_id }}/register">Cancel</a>
+</form>
+{% endblock %}

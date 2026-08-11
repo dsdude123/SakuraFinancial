@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block subtitle %}home{% endblock %}
+{% block content %}
+<h1>Financial Home</h1>
+
+{% if reviews %}
+<div class="warnpanel">
+  <b>&#9888; Bills need your attention</b>
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Bill</th><th>Due</th><th class="num">Expected</th><th class="num">Charged</th><th>Decide</th></tr>
+    {% for r in reviews %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ r.bill_name }}</td>
+      <td>{{ r.due_date }}</td>
+      <td class="num">{{ r.expected_amount|money }}</td>
+      <td class="num"><b>{{ r.actual_amount|money }}</b></td>
+      <td>
+        <form method="post" action="/bills/occurrences/{{ r.id }}/resolve" style="display: inline">
+          <input type="hidden" name="action" value="update_bill">
+          <input type="submit" class="btn" value="Update bill">
+        </form>
+        <form method="post" action="/bills/occurrences/{{ r.id }}/resolve" style="display: inline">
+          <input type="hidden" name="action" value="keep">
+          <input type="submit" class="btn" value="Keep old amount">
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="55%" valign="top">
+  <h2>Accounts</h2>
+  {% for type in type_order %}
+    {% if groups.get(type) %}
+      <table class="data" cellpadding="0" cellspacing="0" style="margin-bottom: 8px">
+        <tr><th colspan="2">{{ type_labels[type] }}</th></tr>
+        {% for a in groups[type] %}
+        <tr class="{{ loop.cycle('odd', 'even') }}">
+          <td><a href="/accounts/{{ a.id }}/register">{{ a.name }}</a>
+              {% if a.currency_code != 'USD' %}<span class="chip">{{ a.currency_code }}</span>{% endif %}</td>
+          <td class="num {% if a.balance is negative %}neg{% endif %}">{{ a.balance|money }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  {% endfor %}
+  <p><a href="/accounts">Manage accounts &raquo;</a></p>
+</td>
+<td width="45%" valign="top" style="padding-left: 12px">
+  <h2>Coming up (14 days)</h2>
+  {% if upcoming %}
+    <table class="data" cellpadding="0" cellspacing="0">
+      <tr><th>Due</th><th>Bill</th><th class="num">Amount</th></tr>
+      {% for o in upcoming %}
+      <tr class="{{ loop.cycle('odd', 'even') }}">
+        <td>{{ o.due_date }}</td>
+        <td>{{ o.bill_name }}</td>
+        <td class="num">{{ o.expected_amount|money }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="dim">Nothing due in the next two weeks.</p>
+  {% endif %}
+
+  <h2>To do</h2>
+  <table class="data" cellpadding="0" cellspacing="0">
+    {% if uncategorized_count %}
+    <tr class="odd"><td><a href="/accounts">{{ uncategorized_count }} uncategorized transaction(s)</a></td></tr>
+    {% endif %}
+    {% if receipts_count %}
+    <tr class="even"><td><a href="/receipts">{{ receipts_count }} receipt(s) waiting to be linked</a></td></tr>
+    {% endif %}
+    <tr class="odd"><td><a href="/monthly">Run this month's updates</a></td></tr>
+  </table>
+</td>
+</tr></table>
+{% endblock %}

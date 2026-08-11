@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ symbol }} history{% endblock %}
+{% block content %}
+<h1>{{ symbol }} price history</h1>
+<div class="panel" align="center">
+  <img src="/charts/stock.png?symbol={{ symbol }}&amp;months={{ months }}" width="720" height="300" alt="{{ symbol }} price chart">
+</div>
+<p>
+  Show:
+  <a href="/stocks/chart?symbol={{ symbol }}&amp;months=3">3 months</a> |
+  <a href="/stocks/chart?symbol={{ symbol }}&amp;months=12">1 year</a> |
+  <a href="/stocks/chart?symbol={{ symbol }}&amp;months=60">5 years</a>
+</p>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Date</th><th class="num">Close</th><th>Source</th></tr>
+  {% for row in history[-30:]|reverse %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ row.date }}</td>
+    <td class="num">{{ row.close|money }}</td>
+    <td>{{ row.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small dim">Showing the most recent 30 records; history is kept
+forever from the moment a security enters the system.</p>
+<p><a href="/stocks">&laquo; Back to Stocks</a></p>
+{% endblock %}

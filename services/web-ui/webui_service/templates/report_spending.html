@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block subtitle %}spending {{ month }}{% endblock %}
+{% block content %}
+<h1>Spending by category
+  <span class="titlebar-sub">
+    <a href="/reports/spending?month={{ prev_month }}" style="color: #ffffff">&laquo; {{ prev_month }}</a>
+    &nbsp;<b>{{ month }}</b>&nbsp;
+    <a href="/reports/spending?month={{ next_month }}" style="color: #ffffff">{{ next_month }} &raquo;</a>
+  </span></h1>
+
+<div class="panel" align="center">
+  <img src="/charts/spending.png?month={{ month }}{% if detail %}&amp;detail={{ detail }}{% endif %}"
+       width="600" height="360" alt="Spending by category pie chart">
+  <br>
+  {% if detail %}
+    <a href="/reports/spending?month={{ month }}">&laquo; back to all categories</a>
+  {% else %}
+    {% set groups = expense_rows|selectattr('children')|list %}
+    {% if groups %}
+      <span class="small dim">break down:</span>
+      {% for row in groups %}
+        <a href="/reports/spending?month={{ month }}&amp;detail={{ row.category_id }}">{{ row.name }}</a>{% if not loop.last %} &middot; {% endif %}
+      {% endfor %}
+    {% endif %}
+  {% endif %}
+</div>
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="55%" valign="top">
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Category</th><th class="num">Net spent</th><th class="num">Share</th></tr>
+    {% for row in expense_rows %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td><b>{{ row.name }}</b></td>
+      <td class="num {% if row.spent is negative %}pos{% endif %}"><b>{{ row.spent|money }}</b></td>
+      <td class="num">{{ row.pct }}%</td>
+    </tr>
+      {% if row.children %}
+        {% if row.own_spent|float %}
+        <tr class="{{ loop.cycle('odd', 'even') }}">
+          <td>&nbsp;&nbsp;&nbsp;&#8627; <span class="dim">(directly on {{ row.name }})</span></td>
+          <td class="num">{{ row.own_spent|money }}</td>
+          <td></td>
+        </tr>
+        {% endif %}
+        {% for child in row.children %}
+        <tr class="{{ loop.cycle('odd', 'even') }}">
+          <td>&nbsp;&nbsp;&nbsp;&#8627; {{ child.name }}</td>
+          <td class="num {% if child.spent is negative %}pos{% endif %}">{{ child.spent|money }}</td>
+          <td></td>
+        </tr>
+        {% endfor %}
+      {% endif %}
+    {% else %}
+    <tr class="odd"><td colspan="3" class="dim">Nothing spent this month.</td></tr>
+    {% endfor %}
+    <tr class="totalrow"><td>Total</td><td class="num">{{ total_spent|money }}</td><td></td></tr>
+  </table>
+  <p class="small dim">Parents total their subcategories — the bold row is the
+  group, the indented rows break it down. Reimbursements are netted: money
+  received against a category reduces its spend, so a negative "spent" means
+  the category took in more than it paid out this month.</p>
+</td>
+<td width="45%" valign="top" style="padding-left: 12px">
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Income</th><th class="num">Amount</th></tr>
+    {% for row in income_rows %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ row.name }}</td>
+      <td class="num pos">{{ row.net|money }}</td>
+    </tr>
+    {% else %}
+    <tr class="odd"><td colspan="2" class="dim">No income recorded.</td></tr>
+    {% endfor %}
+  </table>
+</td>
+</tr></table>
+{% endblock %}

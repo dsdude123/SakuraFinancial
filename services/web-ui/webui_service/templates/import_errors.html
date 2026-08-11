@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block subtitle %}import failed{% endblock %}
+{% block content %}
+<h1>The file didn't pass validation</h1>
+<div class="err"><b>Nothing was imported.</b> {{ message }}</div>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>File line</th><th>Problem</th><th>Row content</th></tr>
+  {% for e in errors %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td class="num">{{ e.line_no }}</td>
+    <td>{{ e.message }}</td>
+    <td class="small dim">{{ e.raw }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<div class="panel">
+  Usually this means the import profile doesn't match the file — wrong column
+  names, wrong date format, or the wrong sign convention.
+  <br><br>
+  <a href="{{ fix_url or '/import/profiles?edit=' ~ profile_id }}"><b>&raquo; Fix the profile</b></a>
+  &nbsp;then&nbsp;
+  <a href="{{ retry_url or '/import' }}">&raquo; upload the file again</a>
+</div>
+{% endblock %}

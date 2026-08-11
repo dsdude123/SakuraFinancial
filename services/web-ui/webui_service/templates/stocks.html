@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block subtitle %}stocks{% endblock %}
+{% block content %}
+<h1>Stocks <span class="titlebar-sub">portfolio total <b>{{ valuation.total|money }}</b></span></h1>
+
+<div class="panel">
+  <form method="post" action="/stocks/prices/refresh" style="display: inline">
+    <input type="submit" class="btn btn-primary" value="Refresh prices now">
+  </form>
+  <span class="small dim">Prices update automatically once a day (previous close).
+  Manual entry below for anything Yahoo doesn't carry.</span>
+</div>
+
+<h2>Accounts</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Account</th><th>Type</th><th class="num">Cash</th><th class="num">Holdings</th><th class="num">Total</th><th></th></tr>
+  {% for a in accounts %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><a href="/stocks/accounts/{{ a.id }}">{{ a.name }}</a>
+      {% if a.type == 'rsu' and a.trading_window_open %}
+        <span class="chip chip-warn">window {{ a.trading_window_open }} &rarr; {{ a.trading_window_close }}</span>
+      {% endif %}
+    </td>
+    <td>{{ a.type }}</td>
+    <td class="num">{{ a.cash|money }}</td>
+    <td class="num">{{ a.market_value|money }}{% if not a.fully_priced %} <span class="chip chip-warn">unpriced</span>{% endif %}</td>
+    <td class="num"><b>{{ a.total|money }}</b></td>
+    <td class="small"><a href="/stocks/accounts/{{ a.id }}">open</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="6" class="dim">No investment accounts yet — create one below.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Securities</h2>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Symbol</th><th>Last close</th><th>As of</th><th>Source</th><th>Chart</th></tr>
+  {% for s in securities %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><b>{{ s.symbol }}</b> <span class="dim small">{{ s.name }}</span></td>
+    <td class="num">{{ s.last_price|money }}</td>
+    <td>{{ s.price_date or '—' }}</td>
+    <td>{{ s.price_source or '' }}</td>
+    <td class="small"><a href="/stocks/chart?symbol={{ s.symbol }}">price history</a></td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="5" class="dim">No securities yet — they appear when you buy, import, or add a price.</td></tr>
+  {% endfor %}
+</table>
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="50%" valign="top">
+  <h2>New account</h2>
+  <div class="panel">
+    <form method="post" action="/stocks/accounts">
+      <table class="form">
+        <tr><td class="formlabel">Name:</td><td><input type="text" name="name" size="24"></td></tr>
+        <tr><td class="formlabel">Type:</td><td>
+          <select name="type">
+            {% for value, label in types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select></td></tr>
+        <tr><td class="formlabel">Opening cash:</td><td><input type="text" name="opening_cash" size="12" value="0.00"></td></tr>
+        <tr><td class="formlabel">Note:</td><td><input type="text" name="note" size="30"></td></tr>
+        <tr><td></td><td><input type="submit" class="btn btn-primary" value="Create account"></td></tr>
+      </table>
+    </form>
+  </div>
+</td>
+<td width="50%" valign="top" style="padding-left: 12px">
+  <h2>Manual price</h2>
+  <div class="panel">
+    <form method="post" action="/stocks/prices/manual">
+      Symbol <input type="text" name="symbol" size="6">
+      Date <input type="text" name="date" size="10" value="{{ today }}">
+      Close <input type="text" name="close" size="10">
+      <input type="submit" class="btn" value="Save price">
+    </form>
+    <p class="small dim">Manual prices are never overwritten by the daily fetch.</p>
+  </div>
+  <h2>Statements</h2>
+  <div class="panel">
+    <a href="/stocks/import"><b>&raquo; Import a broker CSV</b></a>
+    <p class="small dim">Broker transaction-type strings are translated by each
+    profile's action map; unmapped strings stop the import with instructions.</p>
+  </div>
+</td>
+</tr></table>
+{% endblock %}

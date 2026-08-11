@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block subtitle %}payees{% endblock %}
+{% block content %}
+<h1>Payees</h1>
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="55%" valign="top">
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Payee</th><th>Default category</th><th>Active</th><th></th></tr>
+    {% for p in payees %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td><a href="/payees?show={{ p.id }}">{{ p.name }}</a></td>
+      <td>{% for c in categories %}{% if c.id == p.default_category_id %}{{ c.path }}{% endif %}{% endfor %}</td>
+      <td>{% if p.active %}<span class="chip chip-ok">yes</span>{% else %}<span class="chip">no</span>{% endif %}</td>
+      <td class="small"><a href="/payees?show={{ p.id }}">details</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <h2>New payee</h2>
+  <div class="panel">
+    <form method="post" action="/payees">
+      Name <input type="text" name="name" size="24">
+      Default category
+      <select name="default_category_id">
+        <option value="">(none)</option>
+        {% for c in categories %}<option value="{{ c.id }}">{{ c.path }}</option>{% endfor %}
+      </select>
+      <input type="submit" class="btn btn-primary" value="Create">
+    </form>
+  </div>
+</td>
+<td width="45%" valign="top" style="padding-left: 12px">
+  {% if shown %}
+    <h2>{{ shown.name }}</h2>
+    <div class="panel">
+      <form method="post" action="/payees/{{ shown.id }}/update">
+        Default category
+        <select name="default_category_id">
+          <option value="">(none)</option>
+          {% for c in categories %}
+            <option value="{{ c.id }}" {% if shown.default_category_id == c.id %}selected{% endif %}>{{ c.path }}</option>
+          {% endfor %}
+        </select>
+        <input type="checkbox" name="active" {% if shown.active %}checked{% endif %}> active
+        <input type="submit" class="btn" value="Save">
+      </form>
+    </div>
+
+    <h2>Learned CSV descriptions</h2>
+    <p class="small dim">Bank descriptions that map to this payee on import.
+    Learned automatically when you assign a payee during an import review.</p>
+    <table class="data" cellpadding="0" cellspacing="0">
+      <tr><th>Pattern</th><th>Match</th><th></th></tr>
+      {% for a in aliases %}
+      <tr class="{{ loop.cycle('odd', 'even') }}">
+        <td class="small">{{ a.pattern }}</td>
+        <td>{{ a.match_type }}</td>
+        <td>
+          <form method="post" action="/payees/{{ shown.id }}/aliases/{{ a.id }}/delete">
+            <input type="submit" class="btn" value="Remove">
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr class="odd"><td colspan="3" class="dim">None yet.</td></tr>
+      {% endfor %}
+    </table>
+    <div class="panel">
+      <form method="post" action="/payees/{{ shown.id }}/aliases">
+        Pattern <input type="text" name="pattern" size="20">
+        <select name="match_type">
+          <option value="exact">exact</option>
+          <option value="prefix">starts with</option>
+          <option value="contains">contains</option>
+        </select>
+        <input type="submit" class="btn" value="Add alias">
+      </form>
+    </div>
+  {% else %}
+    <p class="dim">Select a payee to see its details and learned CSV descriptions.</p>
+  {% endif %}
+</td>
+</tr></table>
+{% endblock %}

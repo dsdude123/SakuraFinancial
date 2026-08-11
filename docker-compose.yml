@@ -1,0 +1,157 @@
+# SakuraFinancial — the whole stack.
+#
+#     docker compose up --build
+#
+# That is the entire setup. There is nothing to configure first.
+#
+# The database passwords below are fixed on purpose: Postgres publishes no
+# port, so it is reachable only from the other containers on this stack's
+# private network. The per-service users still isolate the services from each
+# other (no service can read another's tables). Everything a human would
+# actually want to change — API keys, import profiles, exchange rates — is set
+# in the web UI at runtime, never in a file.
+#
+# Optional overrides, if you want them: WEBUI_PORT to publish the UI somewhere
+# other than 8000, and SECRET_KEY if you'd rather manage the session-signing
+# key yourself (otherwise one is generated on first boot and kept in the
+# webui_data volume).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: sakura_internal_postgres
+      SETTINGS_DB_PASSWORD: sakura_internal_settings
+      LEDGER_DB_PASSWORD: sakura_internal_ledger
+      BUDGET_DB_PASSWORD: sakura_internal_budget
+      STOCKS_DB_PASSWORD: sakura_internal_stocks
+      RECEIPTS_DB_PASSWORD: sakura_internal_receipts
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  settings:
+    build:
+      context: .
+      dockerfile: services/settings/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_settings:sakura_internal_settings@db:5432/sakura_settings
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8005/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ledger:
+    build:
+      context: .
+      dockerfile: services/ledger/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_ledger:sakura_internal_ledger@db:5432/sakura_ledger
+      SETTINGS_URL: http://settings:8005
+      RECEIPTS_URL: http://receipts:8004
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  budget:
+    build:
+      context: .
+      dockerfile: services/budget/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_budget:sakura_internal_budget@db:5432/sakura_budget
+      LEDGER_URL: http://ledger:8001
+      SETTINGS_URL: http://settings:8005
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  stocks:
+    build:
+      context: .
+      dockerfile: services/stocks/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_stocks:sakura_internal_stocks@db:5432/sakura_stocks
+      SETTINGS_URL: http://settings:8005
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8003/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  receipts:
+    build:
+      context: .
+      dockerfile: services/receipts/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://sakura_receipts:sakura_internal_receipts@db:5432/sakura_receipts
+      SETTINGS_URL: http://settings:8005
+      LEDGER_URL: http://ledger:8001
+      RECEIPTS_DATA_DIR: /data/receipts
+    volumes:
+      - receipts_data:/data/receipts
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8004/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  webui:
+    build:
+      context: .
+      dockerfile: services/web-ui/Dockerfile
+    environment:
+      # Left empty on purpose: web-ui generates a random session key on first
+      # boot and stores it in the webui_data volume. Set this only if you want
+      # to manage the key yourself.
+      SECRET_KEY: ${SECRET_KEY:-}
+      WEBUI_DATA_DIR: /data/webui
+      SETTINGS_URL: http://settings:8005
+      LEDGER_URL: http://ledger:8001
+      BUDGET_URL: http://budget:8002
+      STOCKS_URL: http://stocks:8003
+      RECEIPTS_URL: http://receipts:8004
+    volumes:
+      - webui_data:/data/webui
+    ports:
+      - "${WEBUI_PORT:-8000}:8000"
+    depends_on:
+      - settings
+      - ledger
+      - budget
+      - stocks
+      - receipts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  receipts_data:
+  webui_data:

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block subtitle %}net worth{% endblock %}
+{% block content %}
+<h1>Net worth</h1>
+
+{% if missing_rates %}
+<div class="warnpanel">&#9888; No exchange rate for: {{ missing_rates|join(', ') }}.
+Those accounts are counted 1:1 — add rates on the <a href="/settings">Settings</a> page.</div>
+{% endif %}
+{% if stocks_note %}<div class="warnpanel">{{ stocks_note }}</div>{% endif %}
+
+<div class="panel" align="center">
+  <img src="/charts/networth.png?months={{ months }}" width="720" height="340" alt="Net worth line chart">
+</div>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Month</th><th class="num">Cash</th><th class="num">Investments</th>
+      <th class="num">Assets</th><th class="num">Liabilities</th><th class="num">Net worth</th></tr>
+  {% for row in series %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ row.month }}</td>
+    <td class="num">{{ row.cash|money }}</td>
+    <td class="num">{{ row.investments|money }}</td>
+    <td class="num">{{ row.assets|money }}</td>
+    <td class="num {% if row.liabilities is negative %}neg{% endif %}">{{ row.liabilities|money }}</td>
+    <td class="num {% if row.grand_total is negative %}neg{% endif %}"><b>{{ row.grand_total|money }}</b></td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small dim">Month-end snapshots, converted to USD with your manual
+exchange rates. Cash and non-cash are separate on purpose: this is the report
+where the car's value change belongs.</p>
+<p>
+  Show:
+  <a href="/reports/networth?months=12">12 months</a> |
+  <a href="/reports/networth?months=24">24 months</a> |
+  <a href="/reports/networth?months=60">5 years</a>
+</p>
+{% endblock %}

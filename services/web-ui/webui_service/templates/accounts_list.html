@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block subtitle %}accounts{% endblock %}
+{% block content %}
+<h1>Accounts</h1>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Account</th><th>Type</th><th>Currency</th><th class="num">Balance</th><th>Status</th><th></th></tr>
+  {% for a in accounts %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td><a href="/accounts/{{ a.id }}/register">{{ a.name }}</a></td>
+    <td>{{ a.type }}</td>
+    <td>{{ a.currency_code }}</td>
+    <td class="num {% if a.balance is negative %}neg{% endif %}">{{ a.balance|money }}</td>
+    <td>{% if a.active %}<span class="chip chip-ok">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
+    <td class="small">
+      <form method="post" action="/accounts/{{ a.id }}/update">
+        <input type="hidden" name="name" value="{{ a.name }}">
+        <input type="hidden" name="opening_balance" value="{{ a.opening_balance }}">
+        <input type="hidden" name="note" value="{{ a.note }}">
+        {% if a.active %}
+          <input type="submit" class="btn" value="Deactivate">
+        {% else %}
+          <input type="hidden" name="active" value="on">
+          <input type="submit" class="btn" value="Reactivate">
+        {% endif %}
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>New account</h2>
+<div class="panel">
+  <form method="post" action="/accounts">
+    <table class="form">
+      <tr>
+        <td class="formlabel">Name:</td><td><input type="text" name="name" size="28"></td>
+        <td class="formlabel">Type:</td>
+        <td>
+          <select name="type">
+            {% for value, label in types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td class="formlabel">Currency:</td>
+        <td>
+          <select name="currency_code">
+            {% for c in currencies %}<option value="{{ c.code }}">{{ c.code }} — {{ c.name }}</option>{% endfor %}
+          </select>
+        </td>
+        <td class="formlabel">Opening balance:</td>
+        <td><input type="text" name="opening_balance" size="12" value="0.00">
+            <span class="dim small">for assets: current value</span></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Note:</td>
+        <td colspan="2"><input type="text" name="note" size="40"></td>
+        <td><input type="submit" class="btn btn-primary" value="Create account"></td>
+      </tr>
+    </table>
+  </form>
+</div>
+<p class="dim small">Accounts with history can't be deleted — deactivate them instead.
+New currencies are added on the <a href="/settings">Settings</a> page.</p>
+{% endblock %}
