@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from sakura_common.csvengine import CsvValidationError, parse_bank_csv
+from sakura_common.dedup import normalize_description
 
 from ..db import get_db
 from ..logic import imports as import_logic
@@ -41,9 +42,18 @@ class RowUpdate(BaseModel):
     payee_id: int | None = None
     create_payee_name: str | None = None
     category_id: int | None = None
+    # A category invented on the review screen: bare name or "Parent: Child".
+    create_category_name: str | None = None
+    create_category_kind: str | None = None
     include: bool | None = None
     transfer_account_id: int | None = None
     learn_alias: bool | None = None
+
+
+class GroupResolve(RowUpdate):
+    """Answer every row in a batch that shares one bank description."""
+
+    description: str
 
 
 class TransferRuleIn(BaseModel):
@@ -201,39 +211,56 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
     return import_logic.batch_dict(batch)
 
 
-@router.put("/import/rows/{row_id}")
-def update_row(row_id: int, body: RowUpdate, db: Session = Depends(get_db)):
-    from ..models import ImportRow
+def resolve_category(db: Session, row, body: RowUpdate) -> int | None:
+    """The category this update selects, creating it first when the user typed
+    a new one. Returns None when the update doesn't touch the category."""
+    if body.create_category_name and body.create_category_name.strip():
+        # Income and expense categories live in separate trees; when the caller
+        # doesn't say which, the row's own sign is the reliable answer.
+        kind = body.create_category_kind or ("income" if row.amount > 0 else "expense")
+        try:
+            category = import_logic.resolve_or_create_category(
+                db, body.create_category_name.strip(), kind
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        return category.id
+    if body.category_id is not None:
+        if db.get(Category, body.category_id) is None:
+            raise HTTPException(422, f"no category {body.category_id}")
+        return body.category_id
+    return None
 
-    row = db.get(ImportRow, row_id)
-    if row is None:
-        raise HTTPException(404, f"no import row {row_id}")
-    if row.batch.status != "review":
-        raise HTTPException(422, f"batch is {row.batch.status}, rows can no longer change")
-    if body.create_payee_name:
+
+def apply_row_update(db: Session, row, body: RowUpdate) -> None:
+    """Apply one review answer to one row. Shared by the single-row edit and the
+    resolve-by-description bulk action so both behave identically."""
+    category_id = resolve_category(db, row, body)
+    if body.create_payee_name and body.create_payee_name.strip():
         name = body.create_payee_name.strip()
         payee = db.execute(select(Payee).where(Payee.name == name)).scalar_one_or_none()
         if payee is None:
-            payee = Payee(name=name, default_category_id=body.category_id)
+            payee = Payee(name=name, default_category_id=category_id)
             db.add(payee)
             db.flush()
+        elif payee.default_category_id is None and category_id is not None:
+            payee.default_category_id = category_id
         row.payee_id = payee.id
         row.learn_alias = True if body.learn_alias is None else body.learn_alias
         if row.status == "needs_payee":
             row.status = "ready"
     elif body.payee_id is not None:
-        if db.get(Payee, body.payee_id) is None:
+        payee = db.get(Payee, body.payee_id)
+        if payee is None:
             raise HTTPException(422, f"no payee {body.payee_id}")
         row.payee_id = body.payee_id
         row.learn_alias = True if body.learn_alias is None else body.learn_alias
         if row.status == "needs_payee":
             row.status = "ready"
-        if body.category_id is None and row.category_id is None:
-            row.category_id = db.get(Payee, body.payee_id).default_category_id
-    if body.category_id is not None:
-        if db.get(Category, body.category_id) is None:
-            raise HTTPException(422, f"no category {body.category_id}")
-        row.category_id = body.category_id
+        if category_id is None and row.category_id is None:
+            row.category_id = payee.default_category_id
+    if category_id is not None:
+        row.category_id = category_id
     if body.transfer_account_id is not None:
         if db.get(Account, body.transfer_account_id) is None:
             raise HTTPException(422, f"no account {body.transfer_account_id}")
@@ -243,8 +270,46 @@ def update_row(row_id: int, body: RowUpdate, db: Session = Depends(get_db)):
         row.include = body.include
     if body.learn_alias is not None:
         row.learn_alias = body.learn_alias
+
+
+@router.put("/import/rows/{row_id}")
+def update_row(row_id: int, body: RowUpdate, db: Session = Depends(get_db)):
+    from ..models import ImportRow
+
+    row = db.get(ImportRow, row_id)
+    if row is None:
+        raise HTTPException(404, f"no import row {row_id}")
+    if row.batch.status != "review":
+        raise HTTPException(422, f"batch is {row.batch.status}, rows can no longer change")
+    apply_row_update(db, row, body)
     db.commit()
     return import_logic.row_dict(row)
+
+
+@router.post("/import/batches/{batch_id}/resolve")
+def resolve_group(batch_id: int, body: GroupResolve, db: Session = Depends(get_db)):
+    """Answer every row in the batch sharing one bank description at once.
+
+    Fifty unknown rows are usually five merchants; this is the endpoint that
+    lets the user say it five times instead of fifty."""
+    batch = db.get(ImportBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, f"no batch {batch_id}")
+    if batch.status != "review":
+        raise HTTPException(422, f"batch is {batch.status}, rows can no longer change")
+    target = normalize_description(body.description)
+    matched = [r for r in batch.rows if normalize_description(r.description) == target]
+    if not matched:
+        raise HTTPException(404, f"no rows in this batch describe {body.description!r}")
+    for row in matched:
+        apply_row_update(db, row, body)
+    db.commit()
+    return {
+        "batch_id": batch_id,
+        "description": body.description,
+        "updated": len(matched),
+        "rows": [import_logic.row_dict(r) for r in matched],
+    }
 
 
 @router.post("/import/batches/{batch_id}/commit")

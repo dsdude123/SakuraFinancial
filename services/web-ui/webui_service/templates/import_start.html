@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block subtitle %}import{% endblock %}
 {% block content %}
-<h1>Import a bank CSV</h1>
+<h1>Import a CSV</h1>
 
 {% if open_batches %}
 <div class="warnpanel">
-  <b>Unfinished imports</b> — review or discard:
+  <b>Unfinished imports</b> &mdash; review or discard:
   {% for b in open_batches %}
-    <div><a href="/import/batches/{{ b.id }}">{{ b.filename or 'batch ' ~ b.id }}</a>
-    ({{ b.account_name }}, {{ b.total_rows }} rows)</div>
+    <div><a href="/import/batches/{{ b.kind }}/{{ b.id }}">{{ b.filename or 'batch ' ~ b.id }}</a>
+    ({{ b.account_name }}, {{ b.total_rows }} rows,
+    {{ 'broker activity' if b.kind == 'stock' else 'bank statement' }})</div>
   {% endfor %}
 </div>
 {% endif %}
@@ -20,7 +21,9 @@
         <td class="formlabel">Profile:</td>
         <td>
           <select name="profile_id">
-            {% for p in profiles %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            {% for p in profiles %}
+              <option value="{{ p.ref }}">{{ p.name }} &mdash; {{ kind_labels[p.kind] }}</option>
+            {% endfor %}
           </select>
           <a href="/import/profiles">manage profiles</a>
         </td>
@@ -30,8 +33,18 @@
         <td>
           <select name="account_id">
             <option value="">(use the profile's account)</option>
-            {% for a in accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+            {% if accounts.bank %}
+            <optgroup label="Bank &amp; credit card">
+              {% for a in accounts.bank %}<option value="bank:{{ a.id }}">{{ a.name }}</option>{% endfor %}
+            </optgroup>
+            {% endif %}
+            {% if accounts.stock %}
+            <optgroup label="Investment">
+              {% for a in accounts.stock %}<option value="stock:{{ a.id }}">{{ a.name }}</option>{% endfor %}
+            </optgroup>
+            {% endif %}
           </select>
+          <span class="dim small">must match the profile's type</span>
         </td>
       </tr>
       <tr>
@@ -43,12 +56,15 @@
   </form>
 </div>
 
-<p class="small dim">The file is validated completely before anything is
-written. If any row can't be read you'll get the full list of problems and
-nothing will be imported. Duplicates from overlapping statement ranges are
-detected automatically.</p>
+<p class="small dim">Bank statements and broker activity both come in here &mdash;
+the profile decides how the file is read. The file is validated completely
+before anything is written: if any row can't be read you get the full list of
+problems and nothing is imported. Rows this account has already imported are
+flagged as duplicates and left unchecked.</p>
+
 {% if not profiles %}
-<div class="warnpanel">No import profiles yet — <a href="/import/profiles">create one</a>
-describing your bank's CSV layout first.</div>
+<div class="warnpanel">No import profiles yet &mdash;
+<a href="/import/profiles">create one</a> describing your bank's or broker's
+CSV layout first.</div>
 {% endif %}
 {% endblock %}

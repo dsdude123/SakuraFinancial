@@ -346,6 +346,33 @@ def create_app(
             headers={"Content-Disposition": "attachment; filename=receipt-files.zip"},
         )
 
+    @app.post("/api/reset")
+    def reset(db: Session = Depends(get_db)):
+        """Erase every record and come back up as a fresh install.
+
+        Unlike the other services, receipts also owns files on disk: the
+        original scans are deleted too, or a reset would leave the volume
+        full of documents nothing references."""
+        stored = [
+            row.stored_name
+            for row in db.execute(select(Document)).scalars()
+            if row.stored_name
+        ]
+        deleted = {
+            "receipt_items": db.execute(text("DELETE FROM receipt_items")).rowcount,
+            "documents": db.execute(text("DELETE FROM documents")).rowcount,
+        }
+        removed = 0
+        for name in stored:
+            path = Path(app.state.data_dir) / Path(name).name  # no path traversal
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass  # already gone, or never written — nothing to recover
+        db.commit()
+        return {"reset": "receipts", "deleted": deleted, "files_removed": removed}
+
     @app.post("/api/import")
     def import_(data: dict, db: Session = Depends(get_db)):
         if not isinstance(data.get("documents"), list):

@@ -85,62 +85,69 @@ def create_app(database_url: str | None = None, ledger_client=None) -> FastAPI:
     def get_month(month: str, db: Session = Depends(get_db), ledger=Depends(get_ledger)):
         return logic.month_view(db, ledger, parse_month_or_422(month))
 
-    @app.put("/api/budget/{month}/categories/{category_id}")
-    def set_budget(
-        month: str, category_id: int, body: BudgetIn, db: Session = Depends(get_db)
-    ):
-        month_start = parse_month_or_422(month)
-        if body.amount < 0:
-            raise HTTPException(422, "budget amount cannot be negative")
-        row = db.execute(
+    def change_point(db: Session, month_start: dt.date, category_id: int):
+        return db.execute(
             select(CategoryBudget).where(
                 CategoryBudget.month == month_start, CategoryBudget.category_id == category_id
             )
         ).scalar_one_or_none()
-        if body.amount == 0:
-            if row is not None:
-                db.delete(row)
-            db.commit()
-            return {"month": month, "category_id": category_id, "amount": "0.00"}
+
+    def plan_entry(db: Session, month_start: dt.date, category_id: int) -> dict:
+        amount, since = logic.resolve_plan(db, month_start).get(category_id, (None, None))
+        return {
+            "month": f"{month_start.year:04d}-{month_start.month:02d}",
+            "category_id": category_id,
+            "amount": money_str(amount) if amount is not None else "0.00",
+            "budgeted": amount is not None,
+            "since": f"{since.year:04d}-{since.month:02d}" if since else None,
+        }
+
+    @app.put("/api/budget/{month}/categories/{category_id}")
+    def set_budget(
+        month: str, category_id: int, body: BudgetIn, db: Session = Depends(get_db)
+    ):
+        """Set this category's budget from ``month`` onward.
+
+        The amount holds for every later month too, until another change
+        supersedes it. An amount of 0 stops the category from this month on
+        rather than deleting anything — history keeps whatever it had."""
+        month_start = parse_month_or_422(month)
+        if body.amount < 0:
+            raise HTTPException(422, "budget amount cannot be negative")
+        row = change_point(db, month_start, category_id)
+        already_absent = category_id not in logic.resolve_plan(db, month_start)
+        if body.amount == 0 and row is None and already_absent:
+            return plan_entry(db, month_start, category_id)  # nothing to stop
         if row is None:
-            row = CategoryBudget(month=month_start, category_id=category_id, amount=body.amount)
-            db.add(row)
+            db.add(CategoryBudget(month=month_start, category_id=category_id, amount=body.amount))
         else:
             row.amount = body.amount
         db.commit()
-        return {"month": month, "category_id": category_id, "amount": money_str(row.amount)}
+        return plan_entry(db, month_start, category_id)
 
-    @app.post("/api/budget/{month}/copy-from-previous")
-    def copy_previous(month: str, db: Session = Depends(get_db)):
+    @app.delete("/api/budget/{month}/categories/{category_id}")
+    def clear_change(month: str, category_id: int, db: Session = Depends(get_db)):
+        """Undo the change made in this month, so it inherits again from
+        whatever the previous change said. Not the same as budgeting 0, which
+        stops the category going forward."""
         month_start = parse_month_or_422(month)
-        previous = month_start.replace(day=1)
-        previous = dt.date(
-            previous.year - (1 if previous.month == 1 else 0),
-            12 if previous.month == 1 else previous.month - 1,
-            1,
-        )
-        source = db.execute(
-            select(CategoryBudget).where(CategoryBudget.month == previous)
-        ).scalars().all()
-        if not source:
-            raise HTTPException(404, f"no budgets in {previous:%Y-%m} to copy")
-        copied = 0
-        for row in source:
-            exists = db.execute(
-                select(CategoryBudget).where(
-                    CategoryBudget.month == month_start,
-                    CategoryBudget.category_id == row.category_id,
-                )
-            ).scalar_one_or_none()
-            if exists is None:
-                db.add(
-                    CategoryBudget(
-                        month=month_start, category_id=row.category_id, amount=row.amount
-                    )
-                )
-                copied += 1
+        row = change_point(db, month_start, category_id)
+        if row is None:
+            raise HTTPException(
+                404,
+                f"category {category_id} has no budget change in {month} to undo - "
+                "it is inheriting from an earlier month",
+            )
+        db.delete(row)
         db.commit()
-        return {"copied": copied}
+        return plan_entry(db, month_start, category_id)
+
+    @app.get("/api/budget/{month}/categories/{category_id}")
+    def get_budget(month: str, category_id: int, db: Session = Depends(get_db)):
+        month_start = parse_month_or_422(month)
+        entry = plan_entry(db, month_start, category_id)
+        entry["changed_here"] = change_point(db, month_start, category_id) is not None
+        return entry
 
     @app.get("/api/goals")
     def list_goals(include_inactive: bool = False, db: Session = Depends(get_db)):
@@ -205,6 +212,16 @@ def create_app(database_url: str | None = None, ledger_client=None) -> FastAPI:
                 for goal in db.execute(select(Goal).order_by(Goal.id)).scalars()
             ],
         }
+
+    @app.post("/api/reset")
+    def reset(db: Session = Depends(get_db)):
+        """Erase every record and come back up as a fresh install."""
+        deleted = {
+            "category_budgets": db.execute(text("DELETE FROM category_budgets")).rowcount,
+            "goals": db.execute(text("DELETE FROM goals")).rowcount,
+        }
+        db.commit()
+        return {"reset": "budget", "deleted": deleted}
 
     @app.post("/api/import")
     def import_(data: dict, db: Session = Depends(get_db)):

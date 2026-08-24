@@ -21,6 +21,7 @@ from ..models import (
     BillOccurrence,
     Category,
     Currency,
+    DEFAULT_CURRENCIES,
     FxRate,
     ImportProfile,
     Payee,
@@ -353,3 +354,20 @@ def import_(data: dict, db: Session = Depends(get_db)):
     counts = import_core(db, data)
     db.commit()
     return {"imported": counts}
+
+
+@router.post("/reset")
+def reset(db: Session = Depends(get_db)):
+    """Erase every record and come back up as a fresh install.
+
+    Same table sweep as a restore, but nothing is loaded afterwards — except
+    the default currencies, without which no account can be created and the
+    "fresh install" the user expects wouldn't actually be usable."""
+    deleted = {}
+    for table in CORE_TABLES:
+        deleted[table] = db.execute(text(f"DELETE FROM {table}")).rowcount
+    for code, name, decimals in DEFAULT_CURRENCIES:
+        db.add(Currency(code=code, name=name, decimals=decimals))
+    reset_sequences(db, CORE_TABLES)
+    db.commit()
+    return {"reset": "ledger", "deleted": deleted}

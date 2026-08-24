@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block subtitle %}review import{% endblock %}
+{% block content %}
+<h1>Review import
+  <span class="titlebar-sub">{{ batch.filename }} &rarr; {{ batch.account_name }}</span></h1>
+
+<div class="panel">
+  {{ batch.total_rows }} rows:
+  {% for status, count in batch.row_counts.items() %}
+    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
+  {% endfor %}
+  {% if batch.row_counts.get('no_lots') %}
+    <br><span class="small">(!) A sale marked <b>no_lots</b> is for shares this
+    account doesn't hold &mdash; usually a position bought before this statement
+    covers. Record the opening position on the account first, then re-check the
+    row. Left unchecked, everything else still imports.</span>
+  {% endif %}
+</div>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Date</th><th>Action</th><th>Symbol</th><th class="num">Qty</th>
+      <th class="num">Price</th><th class="num">Amount</th><th class="num">Fee</th>
+      <th>Status</th><th>Note</th><th>Include</th></tr>
+  {% for r in batch.rows %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td>{{ r.date }}</td>
+    <td><b>{{ r.action }}</b></td>
+    <td>{{ r.symbol or '' }}</td>
+    <td class="num">{{ r.quantity or '' }}</td>
+    <td class="num">{{ r.price|money }}</td>
+    <td class="num {% if r.amount is negative %}neg{% endif %}">{{ r.amount|money }}</td>
+    <td class="num">{{ r.fee|money }}</td>
+    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ r.status }}</span></td>
+    <td class="small dim">{{ r.description }}</td>
+    <td>
+      {% if batch.status == 'review' %}
+      <form method="post" action="/import/stock-rows/{{ r.id }}">
+        <input type="hidden" name="batch_id" value="{{ batch.id }}">
+        <input type="checkbox" name="include" {% if r.include %}checked{% endif %}>
+        <input type="submit" class="btn" value="Save">
+      </form>
+      {% else %}{{ 'in' if r.include else 'out' }}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<br>
+{% if batch.status == 'review' %}
+<form method="post" action="/import/batches/stock/{{ batch.id }}/commit" style="display: inline">
+  <input type="submit" class="btn btn-primary" value="Import these rows">
+</form>
+<form method="post" action="/import/batches/stock/{{ batch.id }}/abort" style="display: inline">
+  <input type="submit" class="btn" value="Discard everything">
+</form>
+<p class="small dim">Unchecked rows are skipped. Rows this account has already
+imported are unchecked for you; re-check one to force it in. Buys are applied
+oldest-first so a sale later in the same file draws on the right lots.</p>
+{% else %}
+<div class="msg">This batch is {{ batch.status }}.</div>
+{% endif %}
+{% endblock %}

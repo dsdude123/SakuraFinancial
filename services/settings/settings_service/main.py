@@ -139,6 +139,22 @@ def create_app(database_url: str | None = None) -> FastAPI:
             ],
         }
 
+    @app.post("/api/reset")
+    def reset(data: dict | None = None, db: Session = Depends(get_db)):
+        """Erase stored configuration and come back up as a fresh install.
+
+        ``keep`` lists keys to spare. The web UI passes its password hash: a
+        factory reset should clear API keys and provider config, but locking
+        the user out of the machine they just reset is not "erasing data",
+        it's a support call."""
+        keep = [str(key) for key in (data or {}).get("keep", [])]
+        query = db.query(Setting)
+        if keep:
+            query = query.filter(Setting.key.notin_(keep))
+        deleted = query.delete(synchronize_session=False)
+        db.commit()
+        return {"reset": "settings", "deleted": {"settings": deleted}, "kept": keep}
+
     @app.post("/api/import")
     def import_(data: dict, db: Session = Depends(get_db)):
         rows = data.get("settings")

@@ -10,11 +10,66 @@
     <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'needs_payee' %}chip-warn{% elif status == 'duplicate' %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
   {% endfor %}
   {% if needs_attention %}
-    <br><span class="small">Rows marked <b>needs_payee</b> will import without payee/category
-    unless you assign one — assigning teaches the system for next month.</span>
+    <br><span class="small">{{ needs_attention }} row(s) need a payee, but only
+    {{ unresolved_groups }} distinct description(s) &mdash; answer each one once
+    below and every matching row is filled in. Rows left unanswered still import,
+    just without a payee or category.</span>
   {% endif %}
 </div>
 
+{% if groups %}
+<h2>Assign by description</h2>
+<p class="small dim">One answer per distinct bank description, applied to every
+row that shares it. Choosing a payee also teaches the description for next
+month's import.</p>
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>Bank description</th><th class="num">Rows</th><th class="num">Total</th>
+      <th>Assign to every matching row</th></tr>
+  {% for g in groups %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td class="small">
+      {{ g.description }}
+      {% if g.needs_payee %}<br><span class="chip chip-warn">needs payee</span>{% endif %}
+    </td>
+    <td class="num">{{ g.count }}</td>
+    <td class="num {% if g.total is negative %}neg{% endif %}">{{ g.total|money }}</td>
+    <td>
+      <form method="post" action="/import/batches/bank/{{ batch.id }}/resolve">
+        <input type="hidden" name="description" value="{{ g.description }}">
+        payee
+        <select name="payee_id">
+          <option value="">(no change)</option>
+          {% for p in payees %}
+            <option value="{{ p.id }}" {% if g.payee_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+        <span class="small dim">or new:</span> <input type="text" name="new_payee" size="14">
+        <br>
+        category
+        <select name="category_id">
+          <option value="">(no change)</option>
+          {% for c in categories %}
+            <option value="{{ c.id }}" {% if g.category_id == c.id %}selected{% endif %}>{{ c.path }}</option>
+          {% endfor %}
+        </select>
+        <span class="small dim">or new:</span> <input type="text" name="new_category" size="14">
+        <select name="new_category_kind">
+          <option value="">auto</option>
+          <option value="expense">expense</option>
+          <option value="income">income</option>
+        </select>
+        <input type="submit" class="btn" value="Apply to {{ g.count }} row(s)">
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small dim">A new category may be typed as <code>Food: Groceries</code>
+to file it under an existing parent; a bare name creates a top-level one. "auto"
+picks income or expense from the sign of the rows.</p>
+{% endif %}
+
+<h2>All rows</h2>
 <table class="data" cellpadding="0" cellspacing="0">
   <tr><th>Date</th><th>Bank description</th><th class="num">Amount</th><th>Status</th>
       <th>Assign &amp; include</th></tr>
@@ -48,6 +103,7 @@
               <option value="{{ c.id }}" {% if r.category_id == c.id %}selected{% endif %}>{{ c.path }}</option>
             {% endfor %}
           </select>
+          <span class="small dim">or new:</span> <input type="text" name="new_category" size="10">
         {% endif %}
         <input type="checkbox" name="include" {% if r.include %}checked{% endif %}> in
         <input type="submit" class="btn" value="Save">
@@ -58,12 +114,14 @@
 </table>
 
 <br>
-<form method="post" action="/import/batches/{{ batch.id }}/commit" style="display: inline">
+<form method="post" action="/import/batches/bank/{{ batch.id }}/commit" style="display: inline">
   <input type="submit" class="btn btn-primary" value="Import {{ batch.total_rows }} rows now">
 </form>
-<form method="post" action="/import/batches/{{ batch.id }}/abort" style="display: inline">
+<form method="post" action="/import/batches/bank/{{ batch.id }}/abort" style="display: inline">
   <input type="submit" class="btn" value="Discard everything">
 </form>
-<p class="small dim">Unchecked rows are skipped. Duplicates are unchecked for
-you; re-check one to force it in.</p>
+<p class="small dim">Unchecked rows are skipped. Rows this account has already
+imported are unchecked for you; re-check one to force it in. Two identical
+transactions on the same day in one file are both real &mdash; they are not
+treated as duplicates of each other.</p>
 {% endblock %}

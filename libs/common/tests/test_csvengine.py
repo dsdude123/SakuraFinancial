@@ -177,3 +177,55 @@ class TestStockCsv:
         with pytest.raises(CsvValidationError) as exc:
             parse_stock_csv(text, profile)
         assert "unknown action" in exc.value.errors[0].message
+
+
+class TestBrokerPreambleAndPlaceholders:
+    """Real broker exports open with a few summary lines separated by blank
+    ones, and write a placeholder where a column doesn't apply to a row."""
+
+    def test_skip_top_rows_ignores_blank_lines(self):
+        text = (
+            "All Transactions Activity Types\n"
+            "\n"
+            "Account Activity for Individual Brokerage -0000\n"
+            "\n"
+            "Total:,0.00\n"
+            "\n"
+            "Date,Type,Symbol,Qty,Price,Amount\n"
+            "08/01/2026,Bought,AAPL,1,150.00,-150.00\n"
+        )
+        # Three visible junk lines; the user never counts the blanks between.
+        rows = parse_stock_csv(text, {**STOCK_PROFILE, "skip_top_rows": 3})
+        assert len(rows) == 1
+        assert rows[0].symbol == "AAPL"
+        # Errors still point at the true line in the file.
+        assert rows[0].line_no == 8
+
+    def test_placeholder_cells_read_as_empty(self):
+        text = (
+            "Date,Type,Symbol,Qty,Price,Amount\n"
+            "08/01/2026,WIRE IN,--,,,1000.00\n"
+            "08/02/2026,DIV,AAPL,N/A,--,5.00\n"
+        )
+        rows = parse_stock_csv(text, STOCK_PROFILE)
+        assert rows[0].symbol == ""  # not a ticker called "--"
+        assert rows[1].symbol == "AAPL"
+        assert rows[1].quantity is None
+        assert rows[1].price is None
+
+    def test_null_tokens_are_configurable(self):
+        text = "Date,Type,Symbol,Qty,Price,Amount\n08/01/2026,WIRE IN,NIL,,,1000.00\n"
+        rows = parse_stock_csv(text, {**STOCK_PROFILE, "null_tokens": ["nil"]})
+        assert rows[0].symbol == ""
+
+    def test_sale_quantity_is_normalized_to_a_magnitude(self):
+        text = "Date,Type,Symbol,Qty,Price,Amount\n08/01/2026,YOU SOLD,AAPL,-1.500,50.00,75.00\n"
+        rows = parse_stock_csv(text, STOCK_PROFILE)
+        assert rows[0].action == "sell"
+        assert rows[0].quantity == Decimal("1.5")
+
+    def test_zero_quantity_trade_is_a_row_error(self):
+        text = "Date,Type,Symbol,Qty,Price,Amount\n08/01/2026,Bought,AAPL,0,150.00,-150.00\n"
+        with pytest.raises(CsvValidationError) as exc:
+            parse_stock_csv(text, STOCK_PROFILE)
+        assert "non-zero quantity" in exc.value.errors[0].message

@@ -33,9 +33,9 @@
       {% if item.status != 'skipped' %}
       <form method="post" action="/import/preview" enctype="multipart/form-data">
         <select name="profile_id">
-          {% for p in item.profiles %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+          {% for p in item.profiles %}<option value="bank:{{ p.id }}">{{ p.name }}</option>{% endfor %}
         </select>
-        <input type="hidden" name="account_id" value="{{ item.account.id }}">
+        <input type="hidden" name="account_id" value="bank:{{ item.account.id }}">
         <input type="file" name="file" size="16">
         <input type="submit" class="btn" value="Upload">
       </form>
@@ -67,7 +67,7 @@
   <p class="dim">Stocks service unavailable.</p>
 {% else %}
 <table class="data" cellpadding="0" cellspacing="0">
-  <tr><th>Account</th><th>Type</th><th>Status</th><th></th></tr>
+  <tr><th>Account</th><th>Type</th><th>Status</th><th>Import activity</th><th>Or</th></tr>
   {% for item in stock_accounts %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td><a href="/stocks">{{ item.account.name }}</a></td>
@@ -76,6 +76,21 @@
       {% if item.status == 'imported' %}<span class="chip chip-ok">imported</span>
       {% elif item.status == 'skipped' %}<span class="chip">skipped</span>
       {% else %}<span class="chip chip-warn">pending</span>{% endif %}
+    </td>
+    <td>
+      {% if item.status != 'skipped' and item.profiles %}
+      <form method="post" action="/import/preview" enctype="multipart/form-data">
+        <select name="profile_id">
+          {% for p in item.profiles %}<option value="stock:{{ p.id }}">{{ p.name }}</option>{% endfor %}
+        </select>
+        <input type="hidden" name="account_id" value="stock:{{ item.account.id }}">
+        <input type="file" name="file" size="16">
+        <input type="submit" class="btn" value="Upload">
+      </form>
+      {% elif item.status != 'skipped' %}
+      <span class="small dim">no brokerage profile &mdash;
+        <a href="/import/profiles?kind=stock">create one</a></span>
+      {% endif %}
     </td>
     <td>
       {% if item.status == 'skipped' %}
@@ -94,10 +109,11 @@
     </td>
   </tr>
   {% else %}
-  <tr class="odd"><td colspan="4" class="dim">No investment accounts yet.</td></tr>
+  <tr class="odd"><td colspan="5" class="dim">No investment accounts yet.</td></tr>
   {% endfor %}
 </table>
-<p class="small dim">Import stock CSVs from the <a href="/stocks">Stocks</a> page.</p>
+<p class="small dim">Bank and broker CSVs share one importer &mdash; see
+<a href="/import">Import CSV</a>.</p>
 {% endif %}
 
 <p class="small dim">"Skip" records that an account has nothing to import this

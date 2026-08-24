@@ -68,6 +68,38 @@ class MonthComputation:
     bill_set_aside: Decimal = ZERO
 
 
+def budget_changes(db: Session, through: date | None = None) -> dict[date, dict[int, Decimal]]:
+    """Every stored change point, grouped by the month it takes effect."""
+    query = select(CategoryBudget).order_by(CategoryBudget.month, CategoryBudget.id)
+    if through is not None:
+        query = query.where(CategoryBudget.month <= through)
+    changes: dict[date, dict[int, Decimal]] = {}
+    for row in db.execute(query).scalars():
+        changes.setdefault(row.month, {})[row.category_id] = row.amount
+    return changes
+
+
+def resolve_plan(db: Session, month_start: date) -> dict[int, tuple[Decimal, date]]:
+    """The budget in force for a month: for each category, the most recent
+    change at or before it, with the month that change was made.
+
+    Categories stopped (amount 0) are left out entirely rather than reported
+    as a zero budget — an envelope that exists with nothing in it behaves
+    differently from one that doesn't exist, and "removed from the budget"
+    means the latter."""
+    changes = budget_changes(db, through=month_start)
+    latest: dict[int, tuple[Decimal, date]] = {}
+    for month in sorted(changes):  # oldest first, so later changes win
+        for category_id, amount in changes[month].items():
+            latest[category_id] = (amount, month)
+    return {cid: entry for cid, entry in latest.items() if entry[0] > 0}
+
+
+def plan_amounts(db: Session, month_start: date) -> dict[int, Decimal]:
+    """``resolve_plan`` without the provenance — what the engine budgets with."""
+    return {cid: amount for cid, (amount, _month) in resolve_plan(db, month_start).items()}
+
+
 def envelope_for(category_id: int, budgets: dict, parents: dict[int, int | None]) -> int:
     """Which envelope does spending on this category land in?
 
@@ -141,6 +173,13 @@ def compute_range(
     carry: dict[int, Decimal] = {}
     results: dict[date, MonthComputation] = {}
 
+    # Budgets are change points that stay in force until superseded, so the
+    # walk carries a running plan rather than re-reading a value per month.
+    changes = budget_changes(db, through=target)
+    plan: dict[int, Decimal] = {}
+    for month in sorted(m for m in changes if m < first):
+        plan.update(changes[month])
+
     month = first
     while month <= target:
         comp = MonthComputation()
@@ -148,12 +187,8 @@ def compute_range(
         comp.income = income
         comp.spent_by_category = spent
 
-        budgets = {
-            row.category_id: row.amount
-            for row in db.execute(
-                select(CategoryBudget).where(CategoryBudget.month == month)
-            ).scalars()
-        }
+        plan.update(changes.get(month, {}))
+        budgets = {cid: amount for cid, amount in plan.items() if amount > 0}
         # Spending on a subcategory counts against whichever envelope owns it
         # (its own budget if it has one, otherwise its parent's).
         by_envelope = attribute_spending(spent, budgets, parents)
@@ -303,13 +338,19 @@ def month_view(db: Session, ledger, month_start: date) -> dict:
     index = months.index(month_start)
     carry_in = computed[months[index - 1]].carry_out if index > 0 else {}
 
-    budgets = {
-        row.category_id: row.amount
-        for row in db.execute(
-            select(CategoryBudget).where(CategoryBudget.month == month_start)
-        ).scalars()
-    }
+    resolved = resolve_plan(db, month_start)
+    budgets = {cid: amount for cid, (amount, _since) in resolved.items()}
+    changed_here = set(budget_changes(db, through=month_start).get(month_start, {}))
     rows = build_category_rows(comp, budgets, carry_in, categories, parents)
+    for row in rows:
+        category_id = row["category_id"]
+        entry = resolved.get(category_id) if category_id is not None else None
+        since = entry[1] if entry else None
+        # Where this number came from, so the page can say "carried forward
+        # from March" instead of implying it was typed in this month.
+        row["budget_since"] = f"{since.year:04d}-{since.month:02d}" if since else None
+        row["budget_inherited"] = bool(since and since != month_start)
+        row["budget_changed_here"] = category_id in changed_here
 
     goals = db.execute(
         select(Goal).where(Goal.active).order_by(Goal.priority, Goal.id)

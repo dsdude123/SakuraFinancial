@@ -59,6 +59,33 @@ in unless the backup's settings export carries the old hash, which it does.
 From a Postgres dump instead:
 `cat sakura-YYYY-MM-DD.sql | docker compose exec -T db psql -U postgres`.
 
+## Starting over (factory reset)
+
+Web UI → *Settings* → *Reset everything*. This erases every record in every
+service — accounts, transactions, bills, budgets, goals, investments,
+receipts and their scanned files, and saved settings including API keys — and
+leaves the stack running like a fresh install.
+
+The flow will not let you reach the wipe without a backup in hand:
+
+1. It builds the same zip as *Backup & Restore* and parks it on the web-ui
+   volume. If any service is unreachable the backup would be incomplete, so
+   the reset refuses to start.
+2. You download it. The wipe stays locked until the zip has actually been
+   sent to the browser — a backup you never received is not a backup.
+3. You type `ERASE` and tick the box.
+
+Two things deliberately survive: your **login password** (a reset clears your
+data, it shouldn't lock you out of the machine) and the ledger's **default
+currencies** (without them no account can be created and the "fresh install"
+wouldn't be usable). The parked copy is deleted once the wipe finishes, or if
+you cancel; abandoned ones are swept after six hours. Everything is
+recoverable from the zip you just downloaded via *Backup & Restore*.
+
+Each service also exposes `POST /api/reset` directly if you'd rather wipe one
+of them — it takes no backup and asks no questions, so use the UI unless you
+know exactly why you're not.
+
 ## Security posture
 
 - Only web-ui is published (`:8000`), protected by a single-user password

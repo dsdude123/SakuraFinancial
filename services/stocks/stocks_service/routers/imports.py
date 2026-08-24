@@ -88,6 +88,21 @@ def update_profile(profile_id: int, body: ProfileIn, db: Session = Depends(get_d
     return profile_dict(profile)
 
 
+@router.delete("/profiles/{profile_id}")
+def delete_profile(profile_id: int, db: Session = Depends(get_db)):
+    profile = db.get(StockImportProfile, profile_id)
+    if profile is None:
+        return {"deleted": profile_id}
+    in_use = db.execute(
+        select(StockImportBatch.id).where(StockImportBatch.profile_id == profile_id).limit(1)
+    ).scalar_one_or_none()
+    if in_use is not None:
+        raise HTTPException(409, "profile has import batches - keep it for history")
+    db.delete(profile)
+    db.commit()
+    return {"deleted": profile_id}
+
+
 @router.post("/preview")
 def preview(body: PreviewIn, db: Session = Depends(get_db)):
     """All-or-nothing validation, including the action map: an unmapped

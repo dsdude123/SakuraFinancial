@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import logging
 import os
+from decimal import Decimal
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from sakura_common.csvengine import ParsedBankRow
@@ -32,7 +33,9 @@ from sakura_common.dedup import normalize_description, row_hash
 from sakura_common.money import money_str
 
 from ..models import (
+    CATEGORY_KINDS,
     Account,
+    Category,
     ImportBatch,
     ImportRow,
     PayeeAlias,
@@ -89,17 +92,27 @@ def build_batch(
     filename: str,
     parsed_rows: list[ParsedBankRow],
 ) -> ImportBatch:
-    """Classify fully-validated rows into a review batch. No transactions yet."""
+    """Classify fully-validated rows into a review batch. No transactions yet.
+
+    A row is a duplicate only when *this account has already imported it* — the
+    file is never compared against itself. Two coffees from the same shop for
+    the same amount on the same day are two real transactions, and both must
+    land; the check exists to catch re-importing a statement, not to collapse
+    genuine repeats. A hash already imported N times therefore marks only the
+    first N matching rows in this file, leaving any extras as new activity."""
     batch = ImportBatch(account_id=account.id, profile_id=profile_id, filename=filename)
-    seen_hashes: set[str] = set()
+    remaining_imported: dict[str, int] = {}
     for parsed in parsed_rows:
         digest = row_hash(account.id, parsed.date, parsed.amount, parsed.description)
-        already_imported = (
-            db.execute(
-                select(Transaction.id).where(Transaction.import_hash == digest).limit(1)
-            ).scalar_one_or_none()
-            is not None
-        )
+        if digest not in remaining_imported:
+            remaining_imported[digest] = db.execute(
+                select(func.count())
+                .select_from(Transaction)
+                .where(Transaction.import_hash == digest)
+            ).scalar_one()
+        already_imported = remaining_imported[digest] > 0
+        if already_imported:
+            remaining_imported[digest] -= 1
         row = ImportRow(
             line_no=parsed.line_no,
             date=parsed.date,
@@ -108,7 +121,7 @@ def build_batch(
             amount=parsed.amount,
             row_hash=digest,
         )
-        if already_imported or digest in seen_hashes:
+        if already_imported:
             row.status = "duplicate"
             row.include = False
         else:
@@ -124,7 +137,6 @@ def build_batch(
                     row.category_id = alias.payee.default_category_id
                 else:
                     row.status = "needs_payee"
-        seen_hashes.add(digest)
         batch.rows.append(row)
     db.add(batch)
     return batch
@@ -201,6 +213,85 @@ def commit_batch(db: Session, batch: ImportBatch) -> dict:
     }
 
 
+def resolve_or_create_category(db: Session, path: str, kind: str = "expense") -> Category:
+    """Find (or create) a category from a display path.
+
+    Accepts either a bare name ("Groceries") or the "Parent: Child" form the
+    pickers render, so a category invented during import can be filed under an
+    existing parent without leaving the review screen. Categories nest one level
+    only, matching the rest of the app."""
+    parts = [part.strip() for part in path.split(":", 1)]
+    parts = [part for part in parts if part]
+    if not parts:
+        raise ValueError("category name is required")
+    if kind not in CATEGORY_KINDS:
+        raise ValueError(f"kind must be one of {CATEGORY_KINDS}")
+
+    def get_or_add(name: str, parent_id: int | None) -> Category:
+        existing = db.execute(
+            select(Category).where(Category.name == name, Category.parent_id == parent_id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        category = Category(name=name, kind=kind, parent_id=parent_id)
+        db.add(category)
+        db.flush()
+        return category
+
+    if len(parts) == 1:
+        return get_or_add(parts[0], None)
+    parent = get_or_add(parts[0], None)
+    if parent.parent_id is not None:
+        raise ValueError("categories can nest only one level deep")
+    return get_or_add(parts[1], parent.id)
+
+
+def description_groups(batch: ImportBatch) -> list[dict]:
+    """The review screen's work list: one entry per *distinct* description.
+
+    A statement with fifty unknown rows usually has only a handful of distinct
+    merchants. Grouping by normalized description lets the user answer once per
+    merchant instead of once per row."""
+    groups: dict[str, dict] = {}
+    for row in batch.rows:
+        key = normalize_description(row.description)
+        group = groups.get(key)
+        if group is None:
+            group = groups[key] = {
+                "key": key,
+                "description": row.description,
+                "row_ids": [],
+                "count": 0,
+                "total": Decimal("0"),
+                "statuses": set(),
+                "payee_id": row.payee_id,
+                "category_id": row.category_id,
+            }
+        group["row_ids"].append(row.id)
+        group["count"] += 1
+        group["total"] += row.amount
+        group["statuses"].add(row.status)
+        # A group is "answered" only when every row in it agrees.
+        if row.payee_id != group["payee_id"]:
+            group["payee_id"] = None
+        if row.category_id != group["category_id"]:
+            group["category_id"] = None
+    result = []
+    for group in groups.values():
+        statuses = group.pop("statuses")
+        result.append(
+            {
+                **group,
+                "total": money_str(group["total"]),
+                "needs_payee": "needs_payee" in statuses,
+                "status": "needs_payee" if "needs_payee" in statuses else sorted(statuses)[0],
+            }
+        )
+    # Rows still needing an answer float to the top; then most-repeated first.
+    result.sort(key=lambda g: (not g["needs_payee"], -g["count"], g["description"]))
+    return result
+
+
 def learn_exact_alias(db: Session, payee_id: int, description: str) -> None:
     pattern = normalize_description(description)
     existing = db.execute(
@@ -260,4 +351,5 @@ def batch_dict(batch: ImportBatch, with_rows: bool = True) -> dict:
     }
     if with_rows:
         data["rows"] = [row_dict(row) for row in batch.rows]
+        data["description_groups"] = description_groups(batch)
     return data

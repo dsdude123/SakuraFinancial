@@ -28,13 +28,13 @@ mirror these table names; `app models.py` files are the source of truth.
 | bill_occurrences | bill, due_date (unique per bill), expected_amount, status (`upcoming/paid/skipped/amount_review`), matched_transaction_id, actual_amount |
 | transfer_rules | description pattern → counterparty account; matching imports become transfers |
 | import_profiles | name, default account, CSV config JSON (see `sakura_common.csvengine`) |
-| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer`), include flag, chosen payee/category, learn_alias, resulting transaction_id |
+| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
 
 ## budget (`sakura_budget`)
 
 | table | notes |
 | ----- | ----- |
-| category_budgets | (month, category_id) → planned amount, set on a parent or a child. Category IDs reference the ledger by API, not FK |
+| category_budgets | (month, category_id) → planned amount, set on a parent or a child. Rows are **change points, not per-month values**: an amount holds from its month onward until a later row supersedes it, so a budget is entered once rather than every month. `amount = 0` is a stop ("no longer budgeted from here on"), and deleting a row reverts that month to whatever the previous change said. `logic.resolve_plan` does the resolution. Category IDs reference the ledger by API, not FK |
 | goals | name, target_amount, monthly_contribution, target_date, priority, active |
 
 Everything else (spent, carryovers, waterfall, General Fund) is derived from
@@ -51,7 +51,7 @@ ledger data at request time — never stored, never stale.
 | stock_transactions | type (`buy/sell/dividend/vest/deposit/withdraw/fee`), signed cash `amount`, quantity/price/fees, realized_gain (sells), import_hash |
 | prices | (security, date) → close, source (`yahoo/manual`); manual wins over yahoo. Kept forever |
 | stock_import_profiles | CSV config JSON incl. the **action_map** (broker strings → internal actions) |
-| stock_import_batches / stock_import_rows | review stage; rows are `ready` or `duplicate` |
+| stock_import_batches / stock_import_rows | review stage; rows are `ready`, `duplicate` (already imported into this account), or `no_lots` (a sale of shares the account doesn't hold — bought before the statement's window) |
 | analysis_results | stored on-demand analyses: holdings/valuation/price summaries/Yahoo fundamentals JSON + optional ai_text |
 
 ## receipts (`sakura_receipts`)

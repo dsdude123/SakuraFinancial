@@ -1,3 +1,6 @@
+from pathlib import Path
+
+
 class TestAuth:
     def test_anonymous_is_redirected_to_login(self, browser):
         response = browser.get("/")
@@ -172,10 +175,140 @@ class TestImportWizard:
             "/import/rows/1",
             data={"batch_id": "1", "new_payee": "Safeway", "category_id": "", "include": "on"},
         )
-        summary = logged_in.post("/import/batches/1/commit")
+        summary = logged_in.post("/import/batches/bank/1/commit")
         assert "Imported <b>1</b>" in summary.text
         txns = ledger_api.get("/api/transactions").json()
         assert txns[0]["payee_name"] == "Safeway"
+
+    def test_one_answer_per_description_fills_every_matching_row(self, logged_in, ledger_api):
+        """Ten unknown rows, two merchants: two submits, not ten."""
+        self.seed(logged_in)
+        lines = ["Date,Description,Amount"]
+        for day in range(1, 6):
+            lines.append(f"08/0{day}/2026,SAFEWAY STORE 42,-1{day}.00")
+            lines.append(f"08/0{day}/2026,SHELL OIL 771,-3{day}.00")
+        logged_in.post(
+            "/import/preview",
+            data={"profile_id": "bank:1", "account_id": ""},
+            files={"file": ("aug.csv", "\n".join(lines) + "\n", "text/csv")},
+            follow_redirects=True,
+        )
+        page = logged_in.get("/import/batches/bank/1")
+        assert "Assign by description" in page.text
+        assert "Apply to 5 row(s)" in page.text
+
+        logged_in.post(
+            "/import/batches/bank/1/resolve",
+            data={
+                "description": "SAFEWAY STORE 42",
+                "new_payee": "Safeway",
+                "new_category": "Food: Groceries",
+            },
+        )
+        logged_in.post(
+            "/import/batches/bank/1/resolve",
+            data={"description": "SHELL OIL 771", "new_payee": "Shell", "new_category": "Fuel"},
+        )
+        batch = ledger_api.get("/api/import/batches/1").json()
+        assert all(r["status"] == "ready" for r in batch["rows"])
+        assert {r["payee_name"] for r in batch["rows"]} == {"Safeway", "Shell"}
+
+        logged_in.post("/import/batches/bank/1/commit")
+        txns = ledger_api.get("/api/transactions").json()
+        assert len(txns) == 10
+        assert all(t["payee_name"] in ("Safeway", "Shell") for t in txns)
+
+    def test_a_category_can_be_created_during_review(self, logged_in, ledger_api):
+        self.seed(logged_in)
+        good = "Date,Description,Amount\n08/01/2026,SAFEWAY STORE 42,-10.00\n"
+        logged_in.post(
+            "/import/preview",
+            data={"profile_id": "bank:1", "account_id": ""},
+            files={"file": ("aug.csv", good, "text/csv")},
+            follow_redirects=True,
+        )
+        logged_in.post(
+            "/import/rows/1",
+            data={
+                "batch_id": "1",
+                "new_payee": "Safeway",
+                "new_category": "Food: Groceries",
+                "include": "on",
+            },
+        )
+        categories = ledger_api.get("/api/categories").json()
+        groceries = next(c for c in categories if c["path"] == "Food: Groceries")
+        assert groceries["kind"] == "expense"  # inferred from the row being an outflow
+
+        logged_in.post("/import/batches/bank/1/commit")
+        txn = ledger_api.get("/api/transactions").json()[0]
+        assert txn["splits"][0]["category_id"] == groceries["id"]
+
+
+class TestUnifiedImportSection:
+    def test_bank_and_brokerage_profiles_share_one_page(self, logged_in):
+        logged_in.post(
+            "/accounts",
+            data={
+                "name": "Checking",
+                "type": "checking",
+                "currency_code": "USD",
+                "opening_balance": "0",
+                "note": "",
+            },
+        )
+        logged_in.post(
+            "/stocks/accounts",
+            data={"name": "E*Trade", "type": "brokerage", "opening_cash": "0", "note": ""},
+        )
+        logged_in.post(
+            "/import/profiles",
+            data={
+                "name": "Test Bank",
+                "kind": "bank",
+                "account_id": "1",
+                "delimiter": ",",
+                "has_header": "on",
+                "skip_top_rows": "0",
+                "date_column": "date",
+                "date_format": "%m/%d/%Y",
+                "description_column": "description",
+                "amount_mode": "single",
+                "amount_column": "amount",
+            },
+        )
+        logged_in.post(
+            "/import/profiles",
+            data={
+                "name": "Broker",
+                "kind": "stock",
+                "account_id": "1",
+                "delimiter": ",",
+                "has_header": "on",
+                "skip_top_rows": "3",
+                "date_column": "date",
+                "date_format": "%m/%d/%Y",
+                "action_column": "type",
+                "map_from_0": "Bought",
+                "map_to_0": "buy",
+                "action_map_json": "",
+            },
+        )
+        page = logged_in.get("/import/profiles")
+        assert "Test Bank" in page.text
+        assert "Broker" in page.text
+        assert "Bank / credit card" in page.text
+        assert "Brokerage" in page.text
+        # Both are offered by the one upload form. Each service numbers its own
+        # profiles, so both are id 1 here — the kind prefix is what disambiguates.
+        start = logged_in.get("/import")
+        assert 'value="bank:1"' in start.text
+        assert 'value="stock:1"' in start.text
+
+    def test_the_old_stock_import_page_redirects_into_the_import_section(self, logged_in):
+        response = logged_in.get("/stocks/import", follow_redirects=False)
+        assert response.status_code == 301
+        assert response.headers["location"] == "/import"
 
 
 class TestBillsPage:
