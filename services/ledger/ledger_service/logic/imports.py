@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from datetime import date, timedelta
 from decimal import Decimal
 
 import httpx
@@ -48,26 +50,38 @@ from .transactions import create_transaction, create_transfer
 logger = logging.getLogger(__name__)
 
 
+def alias_matches(alias: PayeeAlias, normalized: str) -> bool:
+    """Does one alias claim this (already normalized) description?"""
+    if alias.match_type == "exact":
+        return alias.pattern == normalized
+    if alias.match_type == "prefix":
+        return normalized.startswith(alias.pattern)
+    if alias.match_type == "contains":
+        return alias.pattern in normalized
+    if alias.match_type == "regex":
+        try:
+            return re.search(alias.pattern, normalized, re.IGNORECASE) is not None
+        except re.error:
+            # A pattern that no longer compiles must not break every import;
+            # it simply matches nothing until the user fixes it.
+            logger.warning("payee alias %s has an invalid regex: %r", alias.id, alias.pattern)
+            return False
+    return False
+
+
+# Most deliberate first: an exact string, then a regex the user wrote on
+# purpose, then the looser prefix/contains catch-alls.
+ALIAS_PRECEDENCE = ("exact", "regex", "prefix", "contains")
+
+
 def find_alias_payee(db: Session, description: str) -> PayeeAlias | None:
-    """Exact match wins, then prefix, then contains."""
+    """The best alias for a description, most specific match type first."""
     normalized = normalize_description(description)
-    exact = db.execute(
-        select(PayeeAlias).where(
-            PayeeAlias.pattern == normalized, PayeeAlias.match_type == "exact"
-        )
-    ).scalar_one_or_none()
-    if exact is not None:
-        return exact
-    for alias in db.execute(
-        select(PayeeAlias).where(PayeeAlias.match_type == "prefix")
-    ).scalars():
-        if normalized.startswith(alias.pattern):
-            return alias
-    for alias in db.execute(
-        select(PayeeAlias).where(PayeeAlias.match_type == "contains")
-    ).scalars():
-        if alias.pattern in normalized:
-            return alias
+    aliases = db.execute(select(PayeeAlias)).scalars().all()
+    for match_type in ALIAS_PRECEDENCE:
+        for alias in aliases:
+            if alias.match_type == match_type and alias_matches(alias, normalized):
+                return alias
     return None
 
 
@@ -81,6 +95,57 @@ def find_transfer_rule(db: Session, description: str, account_id: int) -> Transf
             return rule
         if rule.match_type == "contains" and pattern in normalized:
             return rule
+    return None
+
+
+def find_counterpart_leg(
+    db: Session,
+    *,
+    account_id: int,
+    other_account_id: int,
+    amount: Decimal,
+    when: date,
+    window_days: int,
+    claimed: set[int],
+) -> Transaction | None:
+    """The leg of an already-recorded transfer that this CSV row *is*.
+
+    Importing both sides of a transfer double-counts it: the first statement's
+    row creates both legs, then the other account's statement reports the same
+    movement in its own words. Row hashes can't catch it — different account,
+    different description — so the match is on the thing both banks agree on:
+    the amount. The two accounts also rarely agree on the date (money can leave
+    on Friday and land on Tuesday), hence the rule's window.
+
+    Only legs whose *other* side sits in the account this rule points at count,
+    so an unrelated transfer of the same size isn't swallowed. ``claimed``
+    stops two identical rows in one file from both matching the same leg.
+    """
+    if window_days < 0:
+        window_days = 0
+    earliest = when - timedelta(days=window_days)
+    latest = when + timedelta(days=window_days)
+    candidates = db.execute(
+        select(Transaction).where(
+            Transaction.account_id == account_id,
+            Transaction.kind == "transfer",
+            Transaction.transfer_group_id.is_not(None),
+            Transaction.date >= earliest,
+            Transaction.date <= latest,
+        )
+    ).scalars().all()
+    for leg in sorted(candidates, key=lambda t: (abs((t.date - when).days), t.id)):
+        if leg.id in claimed or leg.total != amount:
+            continue
+        paired = db.execute(
+            select(Transaction.id).where(
+                Transaction.transfer_group_id == leg.transfer_group_id,
+                Transaction.account_id == other_account_id,
+                Transaction.id != leg.id,
+            ).limit(1)
+        ).scalar_one_or_none()
+        if paired is not None:
+            return leg
     return None
 
 
@@ -102,6 +167,7 @@ def build_batch(
     first N matching rows in this file, leaving any extras as new activity."""
     batch = ImportBatch(account_id=account.id, profile_id=profile_id, filename=filename)
     remaining_imported: dict[str, int] = {}
+    claimed_legs: set[int] = set()
     for parsed in parsed_rows:
         digest = row_hash(account.id, parsed.date, parsed.amount, parsed.description)
         if digest not in remaining_imported:
@@ -127,8 +193,22 @@ def build_batch(
         else:
             rule = find_transfer_rule(db, parsed.description, account.id)
             if rule is not None:
-                row.status = "transfer"
                 row.transfer_account_id = rule.account_id
+                leg = find_counterpart_leg(
+                    db,
+                    account_id=account.id,
+                    other_account_id=rule.account_id,
+                    amount=parsed.amount,
+                    when=parsed.date,
+                    window_days=rule.match_days,
+                    claimed=claimed_legs,
+                )
+                if leg is not None:
+                    claimed_legs.add(leg.id)
+                    row.status = "counterpart"
+                    row.include = False
+                else:
+                    row.status = "transfer"
             else:
                 alias = find_alias_payee(db, parsed.description)
                 if alias is not None:

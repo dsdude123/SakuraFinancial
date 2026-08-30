@@ -13,9 +13,9 @@
     <td class="num {% if a.balance is negative %}neg{% endif %}">{{ a.balance|money }}</td>
     <td>{% if a.active %}<span class="chip chip-ok">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
     <td class="small">
+      <a href="/accounts?edit={{ a.id }}">edit</a>
       <form method="post" action="/accounts/{{ a.id }}/update">
         <input type="hidden" name="name" value="{{ a.name }}">
-        <input type="hidden" name="opening_balance" value="{{ a.opening_balance }}">
         <input type="hidden" name="note" value="{{ a.note }}">
         {% if a.active %}
           <input type="submit" class="btn" value="Deactivate">
@@ -28,6 +28,58 @@
   </tr>
   {% endfor %}
 </table>
+
+{% if editing %}
+<h2>Edit account: {{ editing.name }}</h2>
+<div class="panel">
+  <form method="post" action="/accounts/{{ editing.id }}/update">
+    <table class="form">
+      <tr>
+        <td class="formlabel">Name:</td>
+        <td><input type="text" name="name" size="28" value="{{ editing.name }}"></td>
+        <td class="formlabel">Type:</td>
+        <td>
+          <select name="type">
+            {% for value, label in types %}
+              <option value="{{ value }}" {% if editing.type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td class="formlabel">Currency:</td>
+        <td>
+          <select name="currency_code">
+            {% for c in currencies %}
+              <option value="{{ c.code }}" {% if editing.currency_code == c.code %}selected{% endif %}>{{ c.code }} &mdash; {{ c.name }}</option>
+            {% endfor %}
+          </select>
+          <span class="dim small">locked once transactions exist</span>
+        </td>
+        <td class="formlabel">Opening balance:</td>
+        <td><input type="text" name="opening_balance" size="12" value="{{ editing.opening_balance }}"></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Note:</td>
+        <td><input type="text" name="note" size="28" value="{{ editing.note }}"></td>
+        <td class="formlabel">Active:</td>
+        <td><input type="checkbox" name="active" {% if editing.active %}checked{% endif %}></td>
+      </tr>
+      <tr>
+        <td></td>
+        <td><input type="submit" class="btn btn-primary" value="Save account">
+            <a href="/accounts">cancel</a></td>
+        <td colspan="2"></td>
+      </tr>
+    </table>
+  </form>
+  <p class="small dim">Correcting the <b>opening balance</b> shifts every
+  running balance in the register by the difference. That is the fix when a
+  statement export doesn't go back far enough to know where the account really
+  started: import what you have, compare this account's balance with the real
+  one, and put the difference here.</p>
+</div>
+{% endif %}
 
 <h2>New account</h2>
 <div class="panel">

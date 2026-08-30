@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -28,6 +30,29 @@ class PayeeUpdate(BaseModel):
 class AliasIn(BaseModel):
     pattern: str
     match_type: str = "exact"
+
+
+def alias_pattern(raw: str, match_type: str) -> str:
+    """Store the pattern the way its match type needs it.
+
+    Literal patterns are normalized so cosmetic case/whitespace differences
+    don't defeat matching. A regex is stored **verbatim** and validated here:
+    normalizing it would silently invert character classes (upper-casing
+    ``\\d`` gives ``\\D``), and a pattern that doesn't compile should be
+    rejected while the user is looking at it, not swallowed mid-import."""
+    if match_type == "regex":
+        pattern = raw.strip()
+        if not pattern:
+            raise HTTPException(422, "pattern is required")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise HTTPException(422, f"that is not a valid regular expression: {exc}")
+        return pattern
+    pattern = normalize_description(raw)
+    if not pattern:
+        raise HTTPException(422, "pattern is required")
+    return pattern
 
 
 def get_payee_or_404(db: Session, payee_id: int) -> Payee:
@@ -129,9 +154,7 @@ def add_alias(payee_id: int, body: AliasIn, db: Session = Depends(get_db)):
     get_payee_or_404(db, payee_id)
     if body.match_type not in ALIAS_MATCH_TYPES:
         raise HTTPException(422, f"match_type must be one of {ALIAS_MATCH_TYPES}")
-    pattern = normalize_description(body.pattern)
-    if not pattern:
-        raise HTTPException(422, "pattern is required")
+    pattern = alias_pattern(body.pattern, body.match_type)
     existing = db.execute(
         select(PayeeAlias).where(
             PayeeAlias.pattern == pattern, PayeeAlias.match_type == body.match_type

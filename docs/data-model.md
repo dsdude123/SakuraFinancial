@@ -21,14 +21,14 @@ mirror these table names; `app models.py` files are the source of truth.
 | accounts | name, type (`checking, savings, credit_card, cash, asset, liability`), currency, opening_balance, active. The first four types are cash-flow accounts |
 | categories | name, parent (one level: Food → Groceries), kind (`expense`/`income`) as *default direction* — splits accept both signs so reimbursements net. APIs return a `path` ("Food: Groceries") and list parents immediately followed by their children |
 | payees | name, default_category_id (auto-fill), active |
-| payee_aliases | normalized description pattern (`exact`/`prefix`/`contains`) → payee; learned during import review |
+| payee_aliases | description pattern (`exact`/`regex`/`prefix`/`contains`) → payee; learned during import review. Literal patterns are stored normalized; **regex patterns are stored verbatim** and matched case-insensitively (normalizing one would turn `\d` into `\D`). On a tie the most deliberate type wins, in that order |
 | transactions | account, date, payee, memo, status (`uncleared/cleared/reconciled`), kind (`normal/transfer/valuation`), transfer_group_id (pairs transfer legs), import_hash (dedup) |
 | transaction_splits | the money: transaction, category (NULL for transfers/valuations/uncategorized), signed amount, memo. A transaction's total = sum of its splits |
 | bills | payee, category, frequency (`weekly…annual`), expected amount, is_variable, next_due, active |
 | bill_occurrences | bill, due_date (unique per bill), expected_amount, status (`upcoming/paid/skipped/amount_review`), matched_transaction_id, actual_amount |
-| transfer_rules | description pattern → counterparty account; matching imports become transfers |
+| transfer_rules | description pattern → counterparty account; matching imports become transfers. `match_days` is how far apart the two banks may date the same transfer: when the other account's statement is imported later, a row matching an already-recorded transfer by amount inside that window is flagged `counterpart` and left out rather than booking the move twice |
 | import_profiles | name, default account, CSV config JSON (see `sakura_common.csvengine`) |
-| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
+| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer/counterpart`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
 
 ## budget (`sakura_budget`)
 

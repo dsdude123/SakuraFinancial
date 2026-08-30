@@ -423,3 +423,378 @@ class TestFactoryReset:
         # a reset is supposed to leave a usable fresh install.
         assert "USD" in {c["code"] for c in client.get("/api/currencies").json()}
         assert client.post("/api/accounts", json={"name": "New", "type": "checking"}).status_code == 200
+
+
+class TestSequenceResetSafety:
+    """reset_sequences once assumed every table has an id and blew up on
+    Postgres against `currencies`, which is keyed by its ISO code. SQLite skips
+    the whole function, so this asserts the table filtering directly."""
+
+    def test_id_less_tables_are_filtered_out(self):
+        from ledger_service.routers.exports import CORE_TABLES, tables_with_serial_id
+
+        selected = tables_with_serial_id(CORE_TABLES)
+        assert "currencies" not in selected
+        assert "transactions" in selected
+        assert "accounts" in selected
+
+    def test_every_table_the_reset_sweeps_is_either_filtered_or_has_an_id(self):
+        from ledger_service.db import Base
+        from ledger_service.routers.exports import CORE_TABLES, tables_with_serial_id
+
+        selected = set(tables_with_serial_id(CORE_TABLES))
+        for table in CORE_TABLES:
+            columns = Base.metadata.tables[table].columns
+            assert (table in selected) == ("id" in columns), table
+
+    def test_unknown_table_names_are_ignored_not_crashed_on(self):
+        from ledger_service.routers.exports import tables_with_serial_id
+
+        assert tables_with_serial_id(["not_a_real_table"]) == []
+
+
+class TestRegexPayeeAliases:
+    """One merchant, a different reference number every statement line."""
+
+    EXPEDIA = (
+        "Date,Description,Amount\n"
+        "08/01/2026,EXPEDIA INC. 00000000000000004085 - DIR DEP,-120.00\n"
+        "08/09/2026,EXPEDIA INC. 00000000000000009912 - DIR DEP,-340.00\n"
+        "08/17/2026,EXPEDIA INC. 00000000000000000001 - DIR DEP,-55.00\n"
+    )
+
+    def test_one_regex_claims_every_variant(self, client, profile):
+        payee = client.post("/api/payees", json={"name": "Expedia"}).json()
+        response = client.post(
+            f"/api/payees/{payee['id']}/aliases",
+            json={"pattern": r"^EXPEDIA INC\. \d+ - DIR DEP$", "match_type": "regex"},
+        )
+        assert response.status_code == 200
+        batch = preview(client, profile, self.EXPEDIA).json()
+        assert batch["row_counts"] == {"ready": 3}
+        assert {r["payee_name"] for r in batch["rows"]} == {"Expedia"}
+
+    def test_regex_pattern_is_stored_verbatim_not_upper_cased(self, client, profile):
+        """Normalizing a regex would turn \\d into \\D and invert it."""
+        payee = client.post("/api/payees", json={"name": "Expedia"}).json()
+        alias = client.post(
+            f"/api/payees/{payee['id']}/aliases",
+            json={"pattern": r"expedia inc\. \d+", "match_type": "regex"},
+        ).json()
+        assert alias["pattern"] == r"expedia inc\. \d+"
+        # Stored lower case, still matches the upper-cased description.
+        batch = preview(client, profile, self.EXPEDIA).json()
+        assert batch["row_counts"] == {"ready": 3}
+
+    def test_a_bad_regex_is_rejected_when_it_is_typed(self, client):
+        payee = client.post("/api/payees", json={"name": "X"}).json()
+        response = client.post(
+            f"/api/payees/{payee['id']}/aliases",
+            json={"pattern": "EXPEDIA (unclosed", "match_type": "regex"},
+        )
+        assert response.status_code == 422
+        assert "valid regular expression" in response.json()["detail"]
+
+    def test_bank_fees_with_trailing_numbers_collapse_to_one_payee(self, client, profile):
+        fees = client.post("/api/payees", json={"name": "Big Bank"}).json()
+        client.post(
+            f"/api/payees/{fees['id']}/aliases",
+            json={"pattern": r"^FOREIGN TRANSACTION FEE( \d+)?$", "match_type": "regex"},
+        )
+        content = (
+            "Date,Description,Amount\n"
+            "08/01/2026,Foreign Transaction Fee 76,-1.20\n"
+            "08/02/2026,Foreign Transaction Fee 77,-0.94\n"
+            "08/03/2026,Foreign Transaction Fee,-2.00\n"
+        )
+        batch = preview(client, profile, content).json()
+        assert batch["row_counts"] == {"ready": 3}
+
+    def test_exact_alias_still_beats_a_regex(self, client, profile):
+        loose = client.post("/api/payees", json={"name": "Loose"}).json()
+        exact = client.post("/api/payees", json={"name": "Exact"}).json()
+        client.post(
+            f"/api/payees/{loose['id']}/aliases",
+            json={"pattern": "EXPEDIA.*", "match_type": "regex"},
+        )
+        client.post(
+            f"/api/payees/{exact['id']}/aliases",
+            json={"pattern": "EXPEDIA INC. 00000000000000004085 - DIR DEP", "match_type": "exact"},
+        )
+        batch = preview(client, profile, self.EXPEDIA).json()
+        first = next(r for r in batch["rows"] if "4085" in r["description"])
+        assert first["payee_name"] == "Exact"
+        rest = [r for r in batch["rows"] if "4085" not in r["description"]]
+        assert {r["payee_name"] for r in rest} == {"Loose"}
+
+    def test_regex_beats_a_loose_contains_rule(self, client, profile):
+        broad = client.post("/api/payees", json={"name": "Broad"}).json()
+        precise = client.post("/api/payees", json={"name": "Precise"}).json()
+        client.post(
+            f"/api/payees/{broad['id']}/aliases",
+            json={"pattern": "INC", "match_type": "contains"},
+        )
+        client.post(
+            f"/api/payees/{precise['id']}/aliases",
+            json={"pattern": r"EXPEDIA INC\. \d+", "match_type": "regex"},
+        )
+        batch = preview(client, profile, self.EXPEDIA).json()
+        assert {r["payee_name"] for r in batch["rows"]} == {"Precise"}
+
+
+class TestTransferCounterpartDedup:
+    """Both sides of one transfer arrive on two different statements, worded
+    differently. The second import must not book it again."""
+
+    def rules(self, client, checking, savings, days=5):
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "TO SAVINGS", "match_type": "contains",
+                  "account_id": savings["id"], "match_days": days},
+        )
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "FROM CHECKING", "match_type": "contains",
+                  "account_id": checking["id"], "match_days": days},
+        )
+
+    def savings_profile(self, client, savings):
+        return client.post(
+            "/api/import/profiles",
+            json={"name": "Savings Bank", "account_id": savings["id"], "config": PROFILE_CONFIG},
+        ).json()
+
+    def test_other_side_is_flagged_not_double_booked(
+        self, client, profile, checking, savings
+    ):
+        self.rules(client, checking, savings)
+        out = preview(client, profile, "Date,Description,Amount\n08/03/2026,TO SAVINGS,-500.00\n").json()
+        client.post(f"/api/import/batches/{out['id']}/commit")
+        assert len(client.get("/api/transactions").json()) == 2  # both legs
+
+        other = self.savings_profile(client, savings)
+        # Same money, different words, and it cleared three days later.
+        incoming = preview(
+            client, other, "Date,Description,Amount\n08/06/2026,FROM CHECKING,500.00\n"
+        ).json()
+        row = incoming["rows"][0]
+        assert row["status"] == "counterpart"
+        assert row["include"] is False
+
+        summary = client.post(f"/api/import/batches/{incoming['id']}/commit").json()
+        assert summary["created"] == 0
+        assert summary["transfers"] == 0
+        assert len(client.get("/api/transactions").json()) == 2  # still just the pair
+
+    def test_outside_the_window_it_is_a_real_second_transfer(
+        self, client, profile, checking, savings
+    ):
+        self.rules(client, checking, savings, days=2)
+        out = preview(client, profile, "Date,Description,Amount\n08/03/2026,TO SAVINGS,-500.00\n").json()
+        client.post(f"/api/import/batches/{out['id']}/commit")
+
+        other = self.savings_profile(client, savings)
+        late = preview(
+            client, other, "Date,Description,Amount\n08/20/2026,FROM CHECKING,500.00\n"
+        ).json()
+        assert late["rows"][0]["status"] == "transfer"
+
+    def test_a_different_amount_is_not_the_same_transfer(
+        self, client, profile, checking, savings
+    ):
+        self.rules(client, checking, savings)
+        out = preview(client, profile, "Date,Description,Amount\n08/03/2026,TO SAVINGS,-500.00\n").json()
+        client.post(f"/api/import/batches/{out['id']}/commit")
+
+        other = self.savings_profile(client, savings)
+        different = preview(
+            client, other, "Date,Description,Amount\n08/04/2026,FROM CHECKING,250.00\n"
+        ).json()
+        assert different["rows"][0]["status"] == "transfer"
+
+    def test_two_identical_transfers_match_one_for_one(
+        self, client, profile, checking, savings
+    ):
+        """Two £500 moves in the same week are two transfers, and the other
+        statement's two rows must claim one leg each - not both the same one."""
+        self.rules(client, checking, savings)
+        out = preview(
+            client,
+            profile,
+            "Date,Description,Amount\n08/03/2026,TO SAVINGS,-500.00\n"
+            "08/04/2026,TO SAVINGS,-500.00\n",
+        ).json()
+        client.post(f"/api/import/batches/{out['id']}/commit")
+
+        other = self.savings_profile(client, savings)
+        incoming = preview(
+            client,
+            other,
+            "Date,Description,Amount\n08/05/2026,FROM CHECKING,500.00\n"
+            "08/06/2026,FROM CHECKING,500.00\n",
+        ).json()
+        assert [r["status"] for r in incoming["rows"]] == ["counterpart", "counterpart"]
+
+        # A third one really is new money.
+        third = preview(
+            client, other, "Date,Description,Amount\n08/05/2026,FROM CHECKING,500.00\n"
+            "08/06/2026,FROM CHECKING,500.00\n08/07/2026,FROM CHECKING,500.00\n"
+        ).json()
+        assert [r["status"] for r in third["rows"]].count("transfer") == 1
+
+    def test_an_unrelated_transfer_of_the_same_size_is_not_swallowed(
+        self, client, profile, checking, savings, ledger_third_account
+    ):
+        """The counterpart must sit in the account the rule points at."""
+        third = ledger_third_account
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "TO THIRD", "match_type": "contains", "account_id": third["id"]},
+        )
+        out = preview(client, profile, "Date,Description,Amount\n08/03/2026,TO THIRD,-500.00\n").json()
+        client.post(f"/api/import/batches/{out['id']}/commit")
+
+        # Savings imports a 500 credit whose rule points at checking - the
+        # existing transfer pairs checking with the third account, not savings.
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "FROM CHECKING", "match_type": "contains",
+                  "account_id": checking["id"]},
+        )
+        other = self.savings_profile(client, savings)
+        incoming = preview(
+            client, other, "Date,Description,Amount\n08/04/2026,FROM CHECKING,500.00\n"
+        ).json()
+        assert incoming["rows"][0]["status"] == "transfer"
+
+    def test_match_days_round_trips_through_the_api(self, client, savings):
+        rule = client.post(
+            "/api/transfer-rules",
+            json={"pattern": "X", "match_type": "contains",
+                  "account_id": savings["id"], "match_days": 9},
+        ).json()
+        assert rule["match_days"] == 9
+        assert client.get("/api/transfer-rules").json()[0]["match_days"] == 9
+        updated = client.put(
+            f"/api/transfer-rules/{rule['id']}",
+            json={"pattern": "X", "match_type": "contains",
+                  "account_id": savings["id"], "match_days": 0},
+        ).json()
+        assert updated["match_days"] == 0
+
+    def test_negative_window_rejected(self, client, savings):
+        response = client.post(
+            "/api/transfer-rules",
+            json={"pattern": "X", "match_type": "contains",
+                  "account_id": savings["id"], "match_days": -1},
+        )
+        assert response.status_code == 422
+
+
+class TestAccountPayeeForBankCharges:
+    """Fees and interest are levied by the institution, so the account's own
+    name is the payee for them."""
+
+    def test_a_cash_flow_account_gets_a_same_named_payee(self, client):
+        client.post("/api/accounts", json={"name": "Sapphire Card", "type": "credit_card"})
+        names = {p["name"] for p in client.get("/api/payees").json()}
+        assert "Sapphire Card" in names
+
+    def test_every_cash_flow_type_gets_one(self, client):
+        for name, kind in (
+            ("A Checking", "checking"),
+            ("A Savings", "savings"),
+            ("A Card", "credit_card"),
+            ("A Wallet", "cash"),
+        ):
+            client.post("/api/accounts", json={"name": name, "type": kind})
+        names = {p["name"] for p in client.get("/api/payees").json()}
+        assert {"A Checking", "A Savings", "A Card", "A Wallet"} <= names
+
+    def test_asset_accounts_do_not_get_one(self, client):
+        client.post("/api/accounts", json={"name": "The Car", "type": "asset"})
+        assert "The Car" not in {p["name"] for p in client.get("/api/payees").json()}
+
+    def test_an_existing_payee_of_that_name_is_reused(self, client):
+        made = client.post("/api/payees", json={"name": "Big Bank"}).json()
+        client.post("/api/accounts", json={"name": "Big Bank", "type": "checking"})
+        matching = [p for p in client.get("/api/payees").json() if p["name"] == "Big Bank"]
+        assert [p["id"] for p in matching] == [made["id"]]
+
+    def test_the_account_payee_can_take_the_fee_transactions(self, client, profile, checking):
+        """End to end: a fee row books against the account's own payee."""
+        bank = next(p for p in client.get("/api/payees").json() if p["name"] == "Checking")
+        client.post(
+            f"/api/payees/{bank['id']}/aliases",
+            json={"pattern": r"^FOREIGN TRANSACTION FEE( \d+)?$", "match_type": "regex"},
+        )
+        batch = preview(
+            client, profile,
+            "Date,Description,Amount\n08/01/2026,Foreign Transaction Fee 76,-1.20\n",
+        ).json()
+        assert batch["rows"][0]["payee_name"] == "Checking"
+
+
+class TestAccountEditing:
+    def test_name_note_and_opening_balance_are_editable(self, client, checking):
+        updated = client.put(
+            f"/api/accounts/{checking['id']}",
+            json={"name": "Everyday", "opening_balance": "250.00", "note": "joint"},
+        ).json()
+        assert updated["name"] == "Everyday"
+        assert updated["opening_balance"] == "250.00"
+        assert updated["note"] == "joint"
+
+    def test_opening_balance_correction_moves_the_running_balance(self, client, checking):
+        """The reason this matters: a card export with no starting balance
+        means guessing, then correcting once you can compare to the real card."""
+        client.post(
+            "/api/transactions",
+            json={
+                "account_id": checking["id"],
+                "date": "2026-08-01",
+                "splits": [{"category_id": None, "amount": "-40.00"}],
+            },
+        )
+        before = client.get(f"/api/accounts/{checking['id']}").json()["balance"]
+        assert before == "960.00"
+        client.put(f"/api/accounts/{checking['id']}", json={"opening_balance": "-1300.00"})
+        after = client.get(f"/api/accounts/{checking['id']}").json()
+        assert after["balance"] == "-1340.00"
+
+    def test_type_is_editable(self, client, checking):
+        updated = client.put(
+            f"/api/accounts/{checking['id']}", json={"type": "credit_card"}
+        ).json()
+        assert updated["type"] == "credit_card"
+
+    def test_an_unknown_type_is_rejected(self, client, checking):
+        response = client.put(f"/api/accounts/{checking['id']}", json={"type": "wishful"})
+        assert response.status_code == 422
+
+    def test_currency_can_change_while_the_account_is_empty(self, client, checking):
+        updated = client.put(
+            f"/api/accounts/{checking['id']}", json={"currency_code": "cad"}
+        ).json()
+        assert updated["currency_code"] == "CAD"
+
+    def test_currency_is_refused_once_amounts_are_posted(self, client, checking):
+        client.post(
+            "/api/transactions",
+            json={
+                "account_id": checking["id"],
+                "date": "2026-08-01",
+                "splits": [{"category_id": None, "amount": "-40.00"}],
+            },
+        )
+        response = client.put(
+            f"/api/accounts/{checking['id']}", json={"currency_code": "CAD"}
+        )
+        assert response.status_code == 409
+        assert "reinterpret" in response.json()["detail"]
+
+    def test_unknown_currency_rejected(self, client, checking):
+        response = client.put(
+            f"/api/accounts/{checking['id']}", json={"currency_code": "ZZZ"}
+        )
+        assert response.status_code == 422

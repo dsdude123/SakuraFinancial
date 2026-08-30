@@ -8,10 +8,12 @@ budget, receipts, and web-ui services show is derived from data held here.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from .db import Base, make_engine, make_session_factory
+from .db import Base, add_missing_columns, make_engine, make_session_factory
 from .models import Currency, DEFAULT_CURRENCIES
 from .routers import (
     accounts,
@@ -25,10 +27,15 @@ from .routers import (
     transactions,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    added = add_missing_columns(engine)
+    if added:
+        logger.info("added new columns to existing tables: %s", ", ".join(added))
     session_factory = make_session_factory(engine)
 
     with session_factory() as db:

@@ -86,14 +86,15 @@
   <p class="small dim">Imported descriptions matching a rule become transfers to
   the chosen account instead of spending (PAYPAL, VENMO, card payments...).</p>
   <table class="data" cellpadding="0" cellspacing="0">
-    <tr><th>Pattern</th><th>Match</th><th>Counter account</th><th></th></tr>
+    <tr><th>Pattern</th><th>Match</th><th>Counter account</th><th class="num">Window</th><th></th></tr>
     {% for r in rules %}
     <tr class="{{ loop.cycle('odd', 'even') }}">
       <td>{{ r.pattern }}</td><td>{{ r.match_type }}</td><td>{{ r.account_name }}</td>
+      <td class="num">&#177;{{ r.match_days }}d</td>
       <td><form method="post" action="/settings/transfer-rules/{{ r.id }}/delete"><input type="submit" class="btn" value="Remove"></form></td>
     </tr>
     {% else %}
-    <tr class="odd"><td colspan="4" class="dim">No rules yet.</td></tr>
+    <tr class="odd"><td colspan="5" class="dim">No rules yet.</td></tr>
     {% endfor %}
   </table>
   <form method="post" action="/settings/transfer-rules" style="margin-top: 4px">
@@ -106,8 +107,14 @@
     <select name="account_id">
       {% for a in accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
     </select>
+    within <input type="text" name="match_days" size="2" value="5"> days
     <input type="submit" class="btn" value="Add rule">
   </form>
+  <p class="small dim">The window is how far apart the two banks may date the
+  same transfer. When the other account's statement is imported later, a row
+  matching an already-recorded transfer by amount inside this window is marked
+  <b>counterpart</b> and left out, instead of booking the move twice. Set it to
+  0 to require the same day.</p>
 </div>
 
 <h2>Password</h2>

@@ -86,6 +86,17 @@ Each service also exposes `POST /api/reset` directly if you'd rather wipe one
 of them — it takes no backup and asks no questions, so use the UI unless you
 know exactly why you're not.
 
+## Schema upgrades
+
+Services call `Base.metadata.create_all` on boot, which creates missing tables
+but never alters an existing one — so a newly shipped column would leave an
+upgraded install throwing `UndefinedColumn` on the first query. The ledger
+additionally runs `add_missing_columns`, an additive sync that issues
+`ALTER TABLE ... ADD COLUMN` for anything the models declare and the database
+lacks. It only ever adds; it never drops, renames or retypes, so there is
+nothing to roll back and no data to lose. Anything beyond that (a real
+migration) is a restore-from-export job — see above.
+
 ## Security posture
 
 - Only web-ui is published (`:8000`), protected by a single-user password

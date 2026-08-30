@@ -7,7 +7,7 @@
 <div class="panel">
   {{ batch.total_rows }} rows:
   {% for status, count in batch.row_counts.items() %}
-    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'needs_payee' %}chip-warn{% elif status == 'duplicate' %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
+    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'needs_payee' %}chip-warn{% elif status in ('duplicate', 'counterpart') %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
   {% endfor %}
   {% if needs_attention %}
     <br><span class="small">{{ needs_attention }} row(s) need a payee, but only
@@ -78,7 +78,7 @@ picks income or expense from the sign of the rows.</p>
     <td>{{ r.date }}</td>
     <td class="small">{{ r.description }}</td>
     <td class="num {% if r.amount is negative %}neg{% endif %}">{{ r.amount|money }}</td>
-    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'needs_payee' %}chip-warn{% elif r.status == 'duplicate' %}chip-bad{% endif %}">{{ r.status }}</span></td>
+    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'needs_payee' %}chip-warn{% elif r.status in ('duplicate', 'counterpart') %}chip-bad{% endif %}">{{ r.status }}</span></td>
     <td>
       <form method="post" action="/import/rows/{{ r.id }}">
         <input type="hidden" name="batch_id" value="{{ batch.id }}">
@@ -124,4 +124,8 @@ picks income or expense from the sign of the rows.</p>
 imported are unchecked for you; re-check one to force it in. Two identical
 transactions on the same day in one file are both real &mdash; they are not
 treated as duplicates of each other.</p>
+<p class="small dim">A row marked <b>counterpart</b> is the other side of a
+transfer already recorded from the first account's statement, matched by amount
+inside the transfer rule's window. Importing it would book the same movement
+twice, so it is left out.</p>
 {% endblock %}

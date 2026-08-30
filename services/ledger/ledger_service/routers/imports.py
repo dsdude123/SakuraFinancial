@@ -61,6 +61,9 @@ class TransferRuleIn(BaseModel):
     match_type: str = "prefix"
     account_id: int
     active: bool = True
+    # Days of slack when matching this transfer against the other account's
+    # already-imported leg; the two banks rarely post on the same date.
+    match_days: int = 5
 
 
 def profile_dict(profile: ImportProfile) -> dict:
@@ -80,6 +83,7 @@ def rule_dict(rule: TransferRule) -> dict:
         "account_id": rule.account_id,
         "account_name": rule.account.name if rule.account else None,
         "active": rule.active,
+        "match_days": rule.match_days,
     }
 
 
@@ -351,11 +355,14 @@ def create_rule(body: TransferRuleIn, db: Session = Depends(get_db)):
         raise HTTPException(422, f"no account {body.account_id}")
     if not body.pattern.strip():
         raise HTTPException(422, "pattern is required")
+    if body.match_days < 0:
+        raise HTTPException(422, "match_days cannot be negative")
     rule = TransferRule(
         pattern=body.pattern.strip(),
         match_type=body.match_type,
         account_id=body.account_id,
         active=body.active,
+        match_days=body.match_days,
     )
     db.add(rule)
     db.commit()
@@ -371,10 +378,13 @@ def update_rule(rule_id: int, body: TransferRuleIn, db: Session = Depends(get_db
         raise HTTPException(422, "match_type must be 'prefix' or 'contains'")
     if db.get(Account, body.account_id) is None:
         raise HTTPException(422, f"no account {body.account_id}")
+    if body.match_days < 0:
+        raise HTTPException(422, "match_days cannot be negative")
     rule.pattern = body.pattern.strip()
     rule.match_type = body.match_type
     rule.account_id = body.account_id
     rule.active = body.active
+    rule.match_days = body.match_days
     db.commit()
     return rule_dict(rule)
 
