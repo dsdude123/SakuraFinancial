@@ -7,10 +7,10 @@
 <div class="panel">
   {{ batch.total_rows }} rows:
   {% for status, count in batch.row_counts.items() %}
-    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ count }} {{ status }}</span>
+    <span class="chip {% if status == 'ready' %}chip-ok{% elif status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ count }} {{ status|humanize|lower }}</span>
   {% endfor %}
   {% if batch.row_counts.get('no_lots') %}
-    <br><span class="small">(!) A sale marked <b>no_lots</b> is for shares this
+    <br><span class="small">(!) A sale marked <b>no shares held</b> is for shares this
     account doesn't hold &mdash; usually a position bought before this statement
     covers. Record the opening position on the account first, then re-check the
     row. Left unchecked, everything else still imports.</span>
@@ -24,13 +24,13 @@
   {% for r in batch.rows %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td>{{ r.date }}</td>
-    <td><b>{{ r.action }}</b></td>
+    <td><b>{{ r.action|humanize }}</b></td>
     <td>{{ r.symbol or '' }}</td>
     <td class="num">{{ r.quantity or '' }}</td>
     <td class="num">{{ r.price|money }}</td>
     <td class="num {% if r.amount is negative %}neg{% endif %}">{{ r.amount|money }}</td>
     <td class="num">{{ r.fee|money }}</td>
-    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ r.status }}</span></td>
+    <td><span class="chip {% if r.status == 'ready' %}chip-ok{% elif r.status == 'no_lots' %}chip-warn{% else %}chip-bad{% endif %}">{{ r.status|humanize }}</span></td>
     <td class="small dim">{{ r.description }}</td>
     <td>
       {% if batch.status == 'review' %}

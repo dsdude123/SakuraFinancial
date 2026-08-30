@@ -86,16 +86,28 @@ Each service also exposes `POST /api/reset` directly if you'd rather wipe one
 of them — it takes no backup and asks no questions, so use the UI unless you
 know exactly why you're not.
 
-## Schema upgrades
+## Schema upgrades and self-repair
 
-Services call `Base.metadata.create_all` on boot, which creates missing tables
-but never alters an existing one — so a newly shipped column would leave an
-upgraded install throwing `UndefinedColumn` on the first query. The ledger
-additionally runs `add_missing_columns`, an additive sync that issues
-`ALTER TABLE ... ADD COLUMN` for anything the models declare and the database
-lacks. It only ever adds; it never drops, renames or retypes, so there is
-nothing to roll back and no data to lose. Anything beyond that (a real
-migration) is a restore-from-export job — see above.
+Every service runs `sakura_common.schema.sync_schema` at boot. It does two
+things, both additive and both safe to repeat:
+
+1. **`add_missing_columns`** issues `ALTER TABLE ... ADD COLUMN` for anything
+   the models declare and the database lacks. `create_all` makes missing
+   tables but never alters an existing one, so without this a newly shipped
+   column leaves an upgraded install throwing `UndefinedColumn` on the first
+   query. It only adds — never drops, renames or retypes.
+2. **`resync_sequences`** drags any `id` sequence that has fallen behind its
+   table back past `MAX(id)`. Postgres sequences are **not transactional**: a
+   `setval` survives a rollback, so a restore or reset that rewinds the
+   counters and then fails leaves the rows in place with their sequences at 1,
+   and the next insert dies on a duplicate primary key. Sequences are only
+   ever moved forward; one that is already ahead is left alone.
+
+If the logs show `id sequences were behind their tables and have been
+repaired`, that is this working — a restore or reset was interrupted at some
+point, and the damage has been undone.
+
+Anything beyond these (a real migration) is a restore-from-export job.
 
 ## Security posture
 
@@ -122,6 +134,12 @@ migration) is a restore-from-export job — see above.
 
 ## Troubleshooting
 
+- **Something went wrong on a page:** the error page carries an error id and,
+  when the failure was a genuine crash rather than a deliberate rejection, a
+  **Show the technical details** button with the full stack trace. *Error log*
+  in the nav lists the recent ones. That is the same trace the service logged,
+  so you rarely need `docker compose logs` for an application error. The log is
+  in memory only and clears when web-ui restarts.
 - **A service is unhealthy:** `docker compose logs <service>`. All services
   log to stdout.
 - **Web UI says a service is unreachable:** it renders which one; check that

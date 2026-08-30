@@ -24,10 +24,12 @@ def make_account(logged_in, name="Checking", kind="checking", opening="0"):
 
 
 class TestAccountEditing:
-    def test_the_list_offers_an_edit_link_and_a_form(self, logged_in):
+    def test_the_list_offers_an_edit_button_and_a_form(self, logged_in):
         make_account(logged_in)
         page = logged_in.get("/accounts")
-        assert "/accounts?edit=1" in page.text
+        # A button like every other action on the page, not a bare link.
+        assert 'value="Edit"' in page.text
+        assert '<input type="hidden" name="edit" value="1">' in page.text
 
         form = logged_in.get("/accounts?edit=1")
         assert "Edit account: Checking" in form.text

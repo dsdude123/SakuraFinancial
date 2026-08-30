@@ -43,13 +43,13 @@ def profile_dict(profile: StockImportProfile) -> dict:
 def validate_config(config: dict) -> None:
     for key in ("date_column", "action_column"):
         if not config.get(key):
-            raise HTTPException(422, f"profile config missing {key}")
+            raise HTTPException(422, f"The profile is missing a {key.replace('_', ' ')}.")
     action_map = config.get("action_map")
     if not isinstance(action_map, dict) or not action_map:
         raise HTTPException(
             422,
-            "profile config needs a non-empty action_map "
-            '(e.g. {"Bought": "buy", "YOU SOLD": "sell"})',
+            "The profile needs at least one activity mapping, telling the import "
+            'what your broker\'s words mean (for example "Bought" means buy).',
         )
 
 
@@ -63,12 +63,12 @@ def list_profiles(db: Session = Depends(get_db)):
 def create_profile(body: ProfileIn, db: Session = Depends(get_db)):
     validate_config(body.config)
     if body.account_id is not None and db.get(InvestmentAccount, body.account_id) is None:
-        raise HTTPException(422, f"no account {body.account_id}")
+        raise HTTPException(422, f"Investment account {body.account_id} no longer exists.")
     clash = db.execute(
         select(StockImportProfile).where(StockImportProfile.name == body.name)
     ).scalar_one_or_none()
     if clash is not None:
-        raise HTTPException(409, f"profile {body.name!r} already exists")
+        raise HTTPException(409, f"A profile named {body.name!r} already exists.")
     profile = StockImportProfile(name=body.name, account_id=body.account_id, config=body.config)
     db.add(profile)
     db.commit()
@@ -79,7 +79,7 @@ def create_profile(body: ProfileIn, db: Session = Depends(get_db)):
 def update_profile(profile_id: int, body: ProfileIn, db: Session = Depends(get_db)):
     profile = db.get(StockImportProfile, profile_id)
     if profile is None:
-        raise HTTPException(404, f"no profile {profile_id}")
+        raise HTTPException(404, f"Import profile {profile_id} no longer exists.")
     validate_config(body.config)
     profile.name = body.name
     profile.account_id = body.account_id
@@ -97,7 +97,9 @@ def delete_profile(profile_id: int, db: Session = Depends(get_db)):
         select(StockImportBatch.id).where(StockImportBatch.profile_id == profile_id).limit(1)
     ).scalar_one_or_none()
     if in_use is not None:
-        raise HTTPException(409, "profile has import batches - keep it for history")
+        raise HTTPException(
+            409, "That profile has import batches; it is kept so their history stays readable."
+        )
     db.delete(profile)
     db.commit()
     return {"deleted": profile_id}
@@ -110,21 +112,25 @@ def preview(body: PreviewIn, db: Session = Depends(get_db)):
     to extend the map. Nothing is written on failure."""
     profile = db.get(StockImportProfile, body.profile_id)
     if profile is None:
-        raise HTTPException(404, f"no profile {body.profile_id}")
+        raise HTTPException(404, f"Import profile {body.profile_id} no longer exists.")
     account_id = body.account_id or profile.account_id
     if account_id is None:
-        raise HTTPException(422, "no account: pass account_id or set one on the profile")
+        raise HTTPException(
+            422,
+            "This profile has no default account, so the import needs you to choose "
+            "one on the upload form.",
+        )
     account = db.get(InvestmentAccount, account_id)
     if account is None:
-        raise HTTPException(422, f"no account {account_id}")
+        raise HTTPException(422, f"Investment account {account_id} no longer exists.")
     try:
         parsed_rows = parse_stock_csv(body.content, profile.config)
     except CsvValidationError as exc:
         raise HTTPException(
             422,
             {
-                "message": "the file failed validation — fix the import profile (usually the "
-                "action map) and upload again; nothing was imported",
+                "message": "The file did not pass validation, so nothing was imported. "
+                "Fix the import profile (usually the activity map) and upload it again.",
                 "errors": exc.as_dicts(),
             },
         )
@@ -147,7 +153,7 @@ def list_batches(
         try:
             year, mon = (int(part) for part in month.split("-"))
         except ValueError:
-            raise HTTPException(422, "month must look like 2026-08")
+            raise HTTPException(422, "The month must look like 2026-08.")
         batches = [
             b
             for b in batches
@@ -160,7 +166,7 @@ def list_batches(
 def get_batch(batch_id: int, db: Session = Depends(get_db)):
     batch = db.get(StockImportBatch, batch_id)
     if batch is None:
-        raise HTTPException(404, f"no batch {batch_id}")
+        raise HTTPException(404, f"Import batch {batch_id} no longer exists.")
     return import_logic.batch_dict(batch)
 
 
@@ -168,9 +174,11 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
 def update_row(row_id: int, body: RowUpdate, db: Session = Depends(get_db)):
     row = db.get(StockImportRow, row_id)
     if row is None:
-        raise HTTPException(404, f"no row {row_id}")
+        raise HTTPException(404, f"Import row {row_id} no longer exists.")
     if row.batch.status != "review":
-        raise HTTPException(422, f"batch is {row.batch.status}")
+        raise HTTPException(
+            422, f"That batch has already been {row.batch.status}; its rows can no longer change."
+        )
     row.include = body.include
     db.commit()
     return import_logic.row_dict(row)
@@ -180,9 +188,9 @@ def update_row(row_id: int, body: RowUpdate, db: Session = Depends(get_db)):
 def commit(batch_id: int, db: Session = Depends(get_db)):
     batch = db.get(StockImportBatch, batch_id)
     if batch is None:
-        raise HTTPException(404, f"no batch {batch_id}")
+        raise HTTPException(404, f"Import batch {batch_id} no longer exists.")
     if batch.status != "review":
-        raise HTTPException(422, f"batch already {batch.status}")
+        raise HTTPException(422, f"That batch has already been {batch.status}.")
     summary = import_logic.commit_batch(db, batch)
     db.commit()
     return summary
@@ -192,9 +200,9 @@ def commit(batch_id: int, db: Session = Depends(get_db)):
 def abort(batch_id: int, db: Session = Depends(get_db)):
     batch = db.get(StockImportBatch, batch_id)
     if batch is None:
-        raise HTTPException(404, f"no batch {batch_id}")
+        raise HTTPException(404, f"Import batch {batch_id} no longer exists.")
     if batch.status != "review":
-        raise HTTPException(422, f"batch already {batch.status}")
+        raise HTTPException(422, f"That batch has already been {batch.status}.")
     batch.status = "aborted"
     db.commit()
     return {"aborted": batch_id}

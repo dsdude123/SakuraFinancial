@@ -8,12 +8,15 @@
   {% for a in accounts %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td><a href="/accounts/{{ a.id }}/register">{{ a.name }}</a></td>
-    <td>{{ a.type }}</td>
+    <td>{{ a.type|humanize }}</td>
     <td>{{ a.currency_code }}</td>
     <td class="num {% if a.balance is negative %}neg{% endif %}">{{ a.balance|money }}</td>
     <td>{% if a.active %}<span class="chip chip-ok">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
     <td class="small">
-      <a href="/accounts?edit={{ a.id }}">edit</a>
+      <form method="get" action="/accounts">
+        <input type="hidden" name="edit" value="{{ a.id }}">
+        <input type="submit" class="btn" value="Edit">
+      </form>
       <form method="post" action="/accounts/{{ a.id }}/update">
         <input type="hidden" name="name" value="{{ a.name }}">
         <input type="hidden" name="note" value="{{ a.note }}">
@@ -67,11 +70,13 @@
       </tr>
       <tr>
         <td></td>
-        <td><input type="submit" class="btn btn-primary" value="Save account">
-            <a href="/accounts">cancel</a></td>
+        <td><input type="submit" class="btn btn-primary" value="Save account"></td>
         <td colspan="2"></td>
       </tr>
     </table>
+  </form>
+  <form method="get" action="/accounts">
+    <input type="submit" class="btn" value="Cancel">
   </form>
   <p class="small dim">Correcting the <b>opening balance</b> shifts every
   running balance in the register by the difference. That is the fix when a

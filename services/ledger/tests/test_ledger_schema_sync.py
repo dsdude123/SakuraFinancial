@@ -86,3 +86,67 @@ def test_transfer_rules_gains_match_days_on_an_older_database():
     assert "transfer_rules.match_days" in add_missing_columns(engine)
     columns = {c["name"] for c in inspect(engine).get_columns("transfer_rules")}
     assert "match_days" in columns
+
+
+class TestSequenceResync:
+    """setval is not transactional. A reset or restore that rewinds sequences
+    and then fails leaves the rows in place with their counters at 1, and the
+    next insert dies on a duplicate primary key. Nothing recovers from that on
+    its own, so boot checks and repairs it."""
+
+    def test_sqlite_needs_no_resync(self):
+        from ledger_service.db import Base
+        from sakura_common.schema import resync_sequences
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        assert resync_sequences(engine, Base) == []
+
+    def test_sync_schema_reports_both_repairs(self):
+        from ledger_service.db import Base
+        from sakura_common.schema import sync_schema
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        result = sync_schema(engine, Base, service="ledger")
+        assert result == {"added_columns": [], "repaired_sequences": []}
+
+
+def test_a_discarded_batch_does_not_block_the_next_import(client, checking):
+    """The reported failure: discard a batch, import again, duplicate key.
+    On SQLite this always passed; the guard is that ids keep climbing across
+    batches rather than restarting."""
+    profile = client.post(
+        "/api/import/profiles",
+        json={
+            "name": "Bank",
+            "account_id": checking["id"],
+            "config": {
+                "date_column": "date",
+                "date_format": "%m/%d/%Y",
+                "description_column": "description",
+                "amount_column": "amount",
+            },
+        },
+    ).json()
+
+    def upload(content):
+        return client.post(
+            "/api/import/preview",
+            json={"profile_id": profile["id"], "filename": "x.csv", "content": content},
+        )
+
+    first = upload(
+        "Date,Description,Amount\n08/01/2026,ONE,-1.00\n08/02/2026,TWO,-2.00\n"
+    ).json()
+    client.post(f"/api/import/batches/{first['id']}/abort")
+
+    second = upload(
+        "Date,Description,Amount\n09/01/2026,THREE,-3.00\n09/02/2026,FOUR,-4.00\n"
+    )
+    assert second.status_code == 200
+    batch = second.json()
+    assert batch["total_rows"] == 2
+    first_ids = {r["id"] for r in first["rows"]}
+    second_ids = {r["id"] for r in batch["rows"]}
+    assert not (first_ids & second_ids)

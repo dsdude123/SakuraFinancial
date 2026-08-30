@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block subtitle %}error log{% endblock %}
+{% block content %}
+<h1>Error log</h1>
+<p class="small dim">The most recent failures, newest first, with their stack
+traces. Held in memory only: nothing is written to disk and the list is cleared
+when the web UI restarts.</p>
+
+<table class="data" cellpadding="0" cellspacing="0">
+  <tr><th>When</th><th>Error</th><th>Service</th><th>Page</th><th>Message</th><th></th></tr>
+  {% for e in entries %}
+  <tr class="{{ loop.cycle('odd', 'even') }}">
+    <td class="small">{{ e.when }}</td>
+    <td><b>{{ e.id }}</b></td>
+    <td>{{ e.service }}{% if e.status %} ({{ e.status }}){% endif %}</td>
+    <td class="small dim">{{ e.path }}</td>
+    <td class="small">{{ e.message|friendly }}</td>
+    <td>
+      <form method="get" action="/errors/{{ e.id }}">
+        <input type="submit" class="btn" value="Details">
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr class="odd"><td colspan="6" class="dim">Nothing has gone wrong since the web UI started.</td></tr>
+  {% endfor %}
+</table>
+<p><a href="/">&laquo; Back to Home</a></p>
+{% endblock %}

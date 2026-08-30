@@ -55,7 +55,7 @@
       {% for a in aliases %}
       <tr class="{{ loop.cycle('odd', 'even') }}">
         <td class="small">{{ a.pattern }}</td>
-        <td>{{ a.match_type }}</td>
+        <td>{{ a.match_type|humanize }}</td>
         <td>
           <form method="post" action="/payees/{{ shown.id }}/aliases/{{ a.id }}/delete">
             <input type="submit" class="btn" value="Remove">

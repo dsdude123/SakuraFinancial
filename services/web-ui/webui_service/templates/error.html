@@ -5,7 +5,7 @@
 <h1>That didn't work</h1>
 <div class="err">
   {% if status %}
-    The <b>{{ service }}</b> service answered with an error{% if status %} (code {{ status }}){% endif %}:
+    The <b>{{ service }}</b> service answered with an error (code {{ status }}):
   {% else %}
     The <b>{{ service }}</b> service could not be reached. Is its container running?
     Try <code>docker compose ps</code> on the server.
@@ -13,22 +13,43 @@
 </div>
 <div class="panel">
   {% if detail is mapping %}
-    <p><b>{{ detail.message }}</b></p>
+    <p><b>{{ detail.message|friendly }}</b></p>
     {% if detail.errors %}
       <table class="data" cellpadding="0" cellspacing="0">
         <tr><th>Line</th><th>Problem</th><th>Row content</th></tr>
         {% for e in detail.errors %}
           <tr class="{{ loop.cycle('odd', 'even') }}">
             <td class="num">{{ e.line_no }}</td>
-            <td>{{ e.message }}</td>
+            <td>{{ e.message|friendly }}</td>
             <td class="small dim">{{ e.raw }}</td>
           </tr>
         {% endfor %}
       </table>
     {% endif %}
+    {% if detail.exception %}
+      <p class="small dim">{{ detail.exception }}</p>
+    {% endif %}
   {% else %}
-    <p>{{ detail }}</p>
+    <p>{{ detail|friendly }}</p>
   {% endif %}
 </div>
+
+{% if error_id %}
+<div class="panel">
+  <b>Error {{ error_id }}</b>
+  {% if has_trace %}
+    &mdash; the full stack trace was captured.
+    <form method="get" action="/errors/{{ error_id }}">
+      <input type="submit" class="btn" value="Show the technical details">
+    </form>
+  {% else %}
+    <p class="small dim">No stack trace: the service rejected the request on
+    purpose rather than crashing, so the message above is the whole story.</p>
+  {% endif %}
+  <p class="small dim">Recent failures are also listed under
+  <a href="/errors">Error log</a>. They live in memory only and are cleared
+  when the web UI restarts.</p>
+</div>
+{% endif %}
 <p><a href="/">&laquo; Back to Home</a></p>
 {% endblock %}

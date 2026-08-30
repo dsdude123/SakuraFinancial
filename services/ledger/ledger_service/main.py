@@ -13,7 +13,10 @@ import logging
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from .db import Base, add_missing_columns, make_engine, make_session_factory
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
+
+from .db import Base, make_engine, make_session_factory
 from .models import Currency, DEFAULT_CURRENCIES
 from .routers import (
     accounts,
@@ -33,9 +36,7 @@ logger = logging.getLogger(__name__)
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
-    added = add_missing_columns(engine)
-    if added:
-        logger.info("added new columns to existing tables: %s", ", ".join(added))
+    sync_schema(engine, Base, service="ledger")
     session_factory = make_session_factory(engine)
 
     with session_factory() as db:
@@ -45,6 +46,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             db.commit()
 
     app = FastAPI(title="SakuraFinancial ledger-service", version="1.0")
+    install_error_handler(app, "ledger")
     app.state.session_factory = session_factory
 
     @app.get("/health")

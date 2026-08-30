@@ -89,7 +89,7 @@
     <tr><th>Pattern</th><th>Match</th><th>Counter account</th><th class="num">Window</th><th></th></tr>
     {% for r in rules %}
     <tr class="{{ loop.cycle('odd', 'even') }}">
-      <td>{{ r.pattern }}</td><td>{{ r.match_type }}</td><td>{{ r.account_name }}</td>
+      <td>{{ r.pattern }}</td><td>{{ r.match_type|humanize }}</td><td>{{ r.account_name }}</td>
       <td class="num">&#177;{{ r.match_days }}d</td>
       <td><form method="post" action="/settings/transfer-rules/{{ r.id }}/delete"><input type="submit" class="btn" value="Remove"></form></td>
     </tr>

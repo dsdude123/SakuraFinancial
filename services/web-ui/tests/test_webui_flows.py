@@ -168,7 +168,7 @@ class TestImportWizard:
             follow_redirects=True,
         )
         assert "SAFEWAY STORE 42" in response.text
-        assert "needs_payee" in response.text
+        assert "Needs a payee" in response.text
 
         # assign a new payee on the row, then commit
         logged_in.post(

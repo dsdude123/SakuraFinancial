@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from sakura_common import jsonutil
 from sakura_common.money import money_str
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 
 from . import logic
 from .db import Base, get_db, get_ledger, make_engine, make_session_factory
@@ -66,8 +68,10 @@ def parse_month_or_422(month: str) -> dt.date:
 def create_app(database_url: str | None = None, ledger_client=None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="budget")
 
     app = FastAPI(title="SakuraFinancial budget-service", version="1.0")
+    install_error_handler(app, "budget")
     app.state.session_factory = make_session_factory(engine)
     app.state.ledger_client = ledger_client or LedgerClient()
 

@@ -191,7 +191,7 @@ class TestMonthlyIntegration:
         assert "Fidelity" in page.text
         # skip a stock account for the month
         logged_in.post("/monthly/2026-08/skip", data={"service": "stocks", "account_id": "1"})
-        assert "skipped" in logged_in.get("/monthly?month=2026-08").text
+        assert "Skipped" in logged_in.get("/monthly?month=2026-08").text
 
 
 class TestBrokerageImportThroughTheUI:
@@ -250,7 +250,7 @@ class TestBrokerageImportThroughTheUI:
         assert "activity.csv" in review.text
         # The sale of a position bought before this window is held back, named,
         # and explained rather than blowing up the import.
-        assert "no_lots" in review.text
+        assert "No shares held" in review.text
         assert "EXL" in review.text
 
         summary = logged_in.post("/import/batches/stock/1/commit", follow_redirects=True)

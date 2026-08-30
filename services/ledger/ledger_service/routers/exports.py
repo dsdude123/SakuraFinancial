@@ -370,6 +370,12 @@ def export(db: Session = Depends(get_db)):
 def import_(data: dict, db: Session = Depends(get_db)):
     counts = import_core(db, data)
     db.commit()
+    # Belt and braces: import_core sets the sequences inside the load, so if
+    # that load had failed the setvals would have survived the rollback. Doing
+    # it again after the commit makes the counters match what is actually
+    # stored, whatever happened on the way here.
+    reset_sequences(db, CORE_TABLES)
+    db.commit()
     return {"imported": counts}
 
 
@@ -385,6 +391,11 @@ def reset(db: Session = Depends(get_db)):
         deleted[table] = db.execute(text(f"DELETE FROM {table}")).rowcount
     for code, name, decimals in DEFAULT_CURRENCIES:
         db.add(Currency(code=code, name=name, decimals=decimals))
+    db.commit()
+    # Sequences are rewound only once the rows are definitely gone. setval is
+    # NOT transactional: doing it first and then failing would roll the deletes
+    # back while leaving the counters at 1, and the next insert would collide
+    # with rows that still exist.
     reset_sequences(db, CORE_TABLES)
     db.commit()
     return {"reset": "ledger", "deleted": deleted}

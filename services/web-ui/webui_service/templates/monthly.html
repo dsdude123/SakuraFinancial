@@ -25,9 +25,9 @@
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td><a href="/accounts/{{ item.account.id }}/register">{{ item.account.name }}</a></td>
     <td>
-      {% if item.status == 'imported' %}<span class="chip chip-ok">imported</span>
-      {% elif item.status == 'skipped' %}<span class="chip">skipped</span>
-      {% else %}<span class="chip chip-warn">pending</span>{% endif %}
+      {% if item.status == 'imported' %}<span class="chip chip-ok">Imported</span>
+      {% elif item.status == 'skipped' %}<span class="chip">Skipped</span>
+      {% else %}<span class="chip chip-warn">Pending</span>{% endif %}
     </td>
     <td>
       {% if item.status != 'skipped' %}
@@ -71,11 +71,11 @@
   {% for item in stock_accounts %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td><a href="/stocks">{{ item.account.name }}</a></td>
-    <td>{{ item.account.type }}</td>
+    <td>{{ item.account.type|humanize }}</td>
     <td>
-      {% if item.status == 'imported' %}<span class="chip chip-ok">imported</span>
-      {% elif item.status == 'skipped' %}<span class="chip">skipped</span>
-      {% else %}<span class="chip chip-warn">pending</span>{% endif %}
+      {% if item.status == 'imported' %}<span class="chip chip-ok">Imported</span>
+      {% elif item.status == 'skipped' %}<span class="chip">Skipped</span>
+      {% else %}<span class="chip chip-warn">Pending</span>{% endif %}
     </td>
     <td>
       {% if item.status != 'skipped' and item.profiles %}

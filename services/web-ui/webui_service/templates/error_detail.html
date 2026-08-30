@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block subtitle %}error {{ error_id }}{% endblock %}
+{% block content %}
+<h1>Error {{ error_id }}</h1>
+{% if not entry %}
+  <div class="err">That error is no longer in the log &mdash; only the most
+  recent failures are kept, and they are cleared when the web UI restarts.</div>
+  <p><a href="/errors">&laquo; Error log</a></p>
+{% else %}
+<div class="panel">
+  <table class="form">
+    <tr><td class="formlabel">When:</td><td>{{ entry.when }}</td></tr>
+    <tr><td class="formlabel">Service:</td><td>{{ entry.service }}{% if entry.status %} (code {{ entry.status }}){% endif %}</td></tr>
+    <tr><td class="formlabel">Page:</td><td>{{ entry.path }}</td></tr>
+    <tr><td class="formlabel">Message:</td><td>{{ entry.message|friendly }}</td></tr>
+    {% if entry.exception %}
+    <tr><td class="formlabel">Exception:</td><td>{{ entry.exception }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% if entry.traceback %}
+<h2>Stack trace</h2>
+<div class="panel">
+  <pre class="small">{{ entry.traceback }}</pre>
+</div>
+<p class="small dim">This is the same trace that went to
+<code>docker compose logs {{ entry.service }}</code>. Select it and copy if you
+need to keep it &mdash; the log holds only the most recent failures.</p>
+{% else %}
+<p class="dim">No stack trace was captured for this one.</p>
+{% endif %}
+<p><a href="/errors">&laquo; Error log</a></p>
+{% endif %}
+{% endblock %}

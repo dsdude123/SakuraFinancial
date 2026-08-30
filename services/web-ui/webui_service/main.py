@@ -8,6 +8,7 @@ enforced by tests/test_ie6_lint.py.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -20,8 +21,11 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import NotAuthenticated, require_login
 from .clients import Clients, ServiceError
+from .errorlog import ErrorLog
 from .rendering import make_templates, render
 from .secret import resolve_secret_key
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -32,6 +36,7 @@ def create_app(
     app = FastAPI(title="SakuraFinancial web-ui", version="1.0", docs_url=None, redoc_url=None)
     app.state.clients = clients or Clients()
     app.state.templates = make_templates()
+    app.state.errors = ErrorLog()
     # The writable volume: the session key lives here, and so does the safety
     # backup parked mid-reset.
     app.state.data_dir = data_dir or os.environ.get("WEBUI_DATA_DIR", "/data/webui")
@@ -81,13 +86,66 @@ def create_app(
 
     @app.exception_handler(ServiceError)
     async def service_error(request: Request, exc: ServiceError):
+        detail = exc.detail
+        traceback_text = ""
+        exception_text = ""
+        message = detail
+        if isinstance(detail, dict):
+            message = detail.get("message", detail)
+            traceback_text = detail.get("traceback", "")
+            exception_text = detail.get("exception", "")
+        error_id = app.state.errors.record(
+            service=exc.service,
+            status=exc.status,
+            message=str(message),
+            traceback=traceback_text,
+            exception=exception_text,
+            path=request.url.path,
+        )
         return render(
             request,
             "error.html",
             {
                 "service": exc.service,
                 "status": exc.status,
-                "detail": exc.detail,
+                "detail": detail,
+                "error_id": error_id,
+                "has_trace": bool(traceback_text),
+            },
+        )
+
+    @app.middleware("http")
+    async def unhandled(request: Request, call_next):
+        """The web UI's own failures get the same treatment as a backend's.
+        Middleware rather than an Exception handler: Starlette re-raises after
+        those, so the rendered page would never reach the browser."""
+        import traceback as tb
+
+        try:
+            return await call_next(request)
+        except ServiceError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - catch-all by design
+            pass
+        trace = "".join(tb.format_exception(type(exc), exc, exc.__traceback__))
+        logger.error("web UI error on %s %s\n%s", request.method, request.url.path, trace)
+        error_id = app.state.errors.record(
+            service="web UI",
+            status=500,
+            message="The page could not be rendered.",
+            traceback=trace,
+            exception=f"{type(exc).__name__}: {exc}",
+            path=request.url.path,
+        )
+        return render(
+            request,
+            "error.html",
+            {
+                "service": "web UI",
+                "status": 500,
+                "detail": "The page could not be rendered.",
+                "error_id": error_id,
+                "has_trace": True,
             },
         )
 
@@ -102,6 +160,7 @@ def create_app(
         bills,
         budget,
         charts,
+        errors,
         home,
         imports,
         monthly,
@@ -129,6 +188,7 @@ def create_app(
         receipts_pages,
         backup,
         reset,
+        errors,
     ):
         app.include_router(module.router)
     return app

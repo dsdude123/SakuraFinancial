@@ -123,7 +123,7 @@ class TestMonthlyUpdates:
             "/monthly/2026-08/skip", data={"service": "ledger", "account_id": "2"}
         )
         page = logged_in.get("/monthly?month=2026-08")
-        assert "skipped" in page.text
+        assert "Skipped" in page.text
         assert "1 of 2" in page.text
         # a different month is unaffected
         other = logged_in.get("/monthly?month=2026-09")
@@ -146,4 +146,4 @@ class TestMonthlyUpdates:
         ).json()
         ledger_api.post(f"/api/import/batches/{batch['id']}/commit")
         page = logged_in.get("/monthly")
-        assert "imported" in page.text
+        assert "Imported" in page.text

@@ -14,6 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from sakura_common.llm import LLMClient, LLMConfig, LLMError, config_from_settings
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 from sakura_common.settings_client import MASK
 
 from .db import Base, make_engine, make_session_factory
@@ -47,9 +49,11 @@ def serialize(setting: Setting, reveal: bool = False) -> dict:
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="settings")
     session_factory = make_session_factory(engine)
 
     app = FastAPI(title="SakuraFinancial settings-service", version="1.0")
+    install_error_handler(app, "settings")
 
     def get_db():
         db = session_factory()

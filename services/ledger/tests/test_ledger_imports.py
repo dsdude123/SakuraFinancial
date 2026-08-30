@@ -34,7 +34,7 @@ class TestProfiles:
             json={"name": "Bad", "config": {"date_column": "date"}},
         )
         assert bad.status_code == 422
-        assert "description_column" in bad.json()["detail"]
+        assert "description column" in bad.json()["detail"]
 
         bad_mode = client.post(
             "/api/import/profiles",

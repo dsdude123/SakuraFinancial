@@ -14,6 +14,8 @@ import os
 
 from fastapi import FastAPI
 
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 from sakura_common.settings_client import SettingsClient
 from sakura_common.yahoo import YahooClient
 
@@ -34,9 +36,11 @@ def create_app(
 ) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="stocks")
     session_factory = make_session_factory(engine)
 
     app = FastAPI(title="SakuraFinancial stocks-service", version="1.0")
+    install_error_handler(app, "stocks")
     app.state.session_factory = session_factory
     app.state.yahoo = yahoo or YahooClient()
     app.state.settings_client = settings_client or SettingsClient()

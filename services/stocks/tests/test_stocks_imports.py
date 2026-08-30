@@ -50,7 +50,7 @@ class TestProfileValidation:
             },
         )
         assert response.status_code == 422
-        assert "action_map" in response.json()["detail"]
+        assert "activity mapping" in response.json()["detail"]
 
 
 class TestPreview:
