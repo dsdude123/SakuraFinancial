@@ -147,6 +147,11 @@ Anything beyond these (a real migration) is a restore-from-export job.
 - **Stock prices stopped updating:** Yahoo occasionally changes/rate-limits
   endpoints. Check `docker compose logs stocks`; prices can always be entered
   manually meanwhile.
+- **An import is full of unrecognised payees:** add a payee alias (a regular
+  expression handles the ones with a changing reference number), then press
+  *Re-scan against current rules* on the review page — no need to discard the
+  batch and upload the file again. Anything still unanswered at commit is filed
+  under its bank description unless you untick that box.
 - **Import rejected my CSV:** that is by design — the error page lists each
   bad row and why. Fix the import profile (or the file) and re-upload;
   nothing was written.

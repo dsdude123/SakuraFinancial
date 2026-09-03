@@ -247,3 +247,73 @@ def transfer(body: TransferIn, db: Session = Depends(get_db)):
     )
     db.commit()
     return {"out": transaction_dict(leg_out), "in": transaction_dict(leg_in)}
+
+
+class BulkEdit(BaseModel):
+    """Apply one change to many transactions at once. Every field is optional;
+    only the ones given are touched."""
+
+    transaction_ids: list[int]
+    category_id: int | None = None
+    payee_id: int | None = None
+    status: str | None = None
+
+
+@router.post("/transactions/bulk")
+def bulk_edit(body: BulkEdit, db: Session = Depends(get_db)):
+    """Recategorize (or re-payee, or mark cleared) a set of transactions.
+
+    Filing a year of imported rows one at a time is the job this avoids. Two
+    deliberate refusals, reported rather than guessed at:
+
+    * A **split** transaction is skipped when changing the category. Collapsing
+      several categories into one would silently destroy how the money was
+      actually divided, and there is no way to guess which category was meant.
+    * A **transfer or valuation** is skipped for category and payee. Those have
+      neither by design; the register would start lying about what they are.
+    """
+    if not body.transaction_ids:
+        raise HTTPException(422, "Select at least one transaction to change.")
+    if body.status is not None and body.status not in TRANSACTION_STATUSES:
+        raise HTTPException(422, f"Status must be one of {TRANSACTION_STATUSES}.")
+    if body.category_id is not None and db.get(Category, body.category_id) is None:
+        raise HTTPException(422, f"Category {body.category_id} no longer exists.")
+    if body.payee_id is not None and db.get(Payee, body.payee_id) is None:
+        raise HTTPException(422, f"Payee {body.payee_id} no longer exists.")
+    if body.category_id is None and body.payee_id is None and body.status is None:
+        raise HTTPException(422, "Choose a category, a payee or a status to apply.")
+
+    transactions = (
+        db.execute(
+            select(Transaction)
+            .options(joinedload(Transaction.splits))
+            .where(Transaction.id.in_(body.transaction_ids))
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+    found = {txn.id for txn in transactions}
+    updated = 0
+    skipped: list[dict] = []
+    for txn in transactions:
+        reasons = []
+        if body.category_id is not None or body.payee_id is not None:
+            if txn.kind != "normal":
+                reasons.append(f"it is a {txn.kind}, which has no payee or category")
+        if body.category_id is not None and txn.kind == "normal" and len(txn.splits) > 1:
+            reasons.append(f"it is split across {len(txn.splits)} categories")
+        if reasons:
+            skipped.append({"id": txn.id, "reason": reasons[0]})
+            continue
+        if body.category_id is not None:
+            txn.splits[0].category_id = body.category_id
+        if body.payee_id is not None:
+            txn.payee_id = body.payee_id
+        if body.status is not None:
+            txn.status = body.status
+        updated += 1
+    for missing in [i for i in body.transaction_ids if i not in found]:
+        skipped.append({"id": missing, "reason": "it no longer exists"})
+    db.commit()
+    return {"updated": updated, "skipped": skipped}

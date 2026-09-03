@@ -38,6 +38,7 @@ from ..models import (
     CATEGORY_KINDS,
     Account,
     Category,
+    Payee,
     ImportBatch,
     ImportRow,
     PayeeAlias,
@@ -222,7 +223,91 @@ def build_batch(
     return batch
 
 
-def commit_batch(db: Session, batch: ImportBatch) -> dict:
+def reclassify_batch(db: Session, batch: ImportBatch) -> dict:
+    """Re-run classification over a batch already in review.
+
+    The point is the alias you write *after* uploading: notice that one regex
+    would claim forty rows, add it, and the batch catches up without a
+    re-upload. Rows you have already answered are left exactly as they are —
+    only rows still waiting on a payee are re-examined — so this can never undo
+    manual work.
+
+    Duplicate and counterpart flags are recomputed for every unanswered row
+    too, since transactions may have been imported elsewhere in the meantime.
+    """
+    account = db.get(Account, batch.account_id)
+    remaining_imported: dict[str, int] = {}
+    claimed_legs: set[int] = set()
+    changed = 0
+    for row in sorted(batch.rows, key=lambda r: r.line_no):
+        if row.transaction_id is not None or row.status != "needs_payee":
+            continue
+        before = (row.status, row.payee_id, row.category_id, row.transfer_account_id)
+
+        digest = row.row_hash
+        if digest not in remaining_imported:
+            remaining_imported[digest] = db.execute(
+                select(func.count())
+                .select_from(Transaction)
+                .where(Transaction.import_hash == digest)
+            ).scalar_one()
+        if remaining_imported[digest] > 0:
+            remaining_imported[digest] -= 1
+            row.status, row.include = "duplicate", False
+        else:
+            rule = find_transfer_rule(db, row.description, account.id)
+            if rule is not None:
+                row.transfer_account_id = rule.account_id
+                leg = find_counterpart_leg(
+                    db,
+                    account_id=account.id,
+                    other_account_id=rule.account_id,
+                    amount=row.amount,
+                    when=row.date,
+                    window_days=rule.match_days,
+                    claimed=claimed_legs,
+                )
+                if leg is not None:
+                    claimed_legs.add(leg.id)
+                    row.status, row.include = "counterpart", False
+                else:
+                    row.status = "transfer"
+            else:
+                alias = find_alias_payee(db, row.description)
+                if alias is not None:
+                    row.status = "ready"
+                    row.payee_id = alias.payee_id
+                    row.category_id = alias.payee.default_category_id
+        if (row.status, row.payee_id, row.category_id, row.transfer_account_id) != before:
+            changed += 1
+    counts: dict[str, int] = {}
+    for row in batch.rows:
+        counts[row.status] = counts.get(row.status, 0) + 1
+    return {"batch_id": batch.id, "changed": changed, "row_counts": counts}
+
+
+def payee_from_description(db: Session, description: str) -> int | None:
+    """Get or create a payee named after the bank's own description.
+
+    Plenty of descriptions already *are* the payee ("QFC", "Service Charge"),
+    so leaving those rows with no payee at all throws away information the
+    statement handed over. Reuses an existing payee of that name rather than
+    accumulating near-duplicates."""
+    name = " ".join(description.split()).strip()
+    if not name:
+        return None
+    existing = db.execute(select(Payee).where(Payee.name == name)).scalar_one_or_none()
+    if existing is not None:
+        return existing.id
+    payee = Payee(name=name)
+    db.add(payee)
+    db.flush()
+    return payee.id
+
+
+def commit_batch(
+    db: Session, batch: ImportBatch, name_payees_from_descriptions: bool = True
+) -> dict:
     """Turn included rows into transactions. Runs inside one DB transaction —
     the router commits after this returns, so a failure writes nothing."""
     accounts = {a.id: a for a in db.execute(select(Account)).scalars()}
@@ -259,6 +344,8 @@ def commit_batch(db: Session, batch: ImportBatch) -> dict:
                 txn.import_hash = row.row_hash
             transfers += 1
         else:
+            if row.payee_id is None and name_payees_from_descriptions:
+                row.payee_id = payee_from_description(db, row.description)
             category_id = row.category_id
             if category_id is None and row.payee is not None:
                 category_id = row.payee.default_category_id

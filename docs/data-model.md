@@ -28,7 +28,7 @@ mirror these table names; `app models.py` files are the source of truth.
 | bill_occurrences | bill, due_date (unique per bill), expected_amount, status (`upcoming/paid/skipped/amount_review`), matched_transaction_id, actual_amount |
 | transfer_rules | description pattern → counterparty account; matching imports become transfers. `match_days` is how far apart the two banks may date the same transfer: when the other account's statement is imported later, a row matching an already-recorded transfer by amount inside that window is flagged `counterpart` and left out rather than booking the move twice |
 | import_profiles | name, default account, CSV config JSON (see `sakura_common.csvengine`) |
-| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer/counterpart`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
+| import_batches / import_rows | the review stage (re-runnable: `POST /api/import/batches/{id}/reclassify` re-examines rows still `needs_payee` against aliases and transfer rules added since upload, leaving answered rows alone): parsed rows with status (`ready/needs_payee/duplicate/transfer/counterpart`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
 
 ## budget (`sakura_budget`)
 

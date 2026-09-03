@@ -798,3 +798,121 @@ class TestAccountEditing:
             f"/api/accounts/{checking['id']}", json={"currency_code": "ZZZ"}
         )
         assert response.status_code == 422
+
+
+class TestReclassifyMidReview:
+    """The alias you write *after* uploading. Adding it should catch the batch
+    up without discarding it and re-uploading the file."""
+
+    CONTENT = (
+        "Date,Description,Amount\n"
+        "08/01/2026,EXPEDIA INC. 00000000000000004085 - DIR DEP,-120.00\n"
+        "08/02/2026,EXPEDIA INC. 00000000000000009912 - DIR DEP,-340.00\n"
+        "08/03/2026,QFC,-60.61\n"
+    )
+
+    def test_a_new_regex_claims_rows_already_in_review(self, client, profile):
+        batch = preview(client, profile, self.CONTENT).json()
+        assert batch["row_counts"] == {"needs_payee": 3}
+
+        payee = client.post("/api/payees", json={"name": "Expedia"}).json()
+        client.post(
+            f"/api/payees/{payee['id']}/aliases",
+            json={"pattern": r"^EXPEDIA INC\. \d+ - DIR DEP$", "match_type": "regex"},
+        )
+        result = client.post(f"/api/import/batches/{batch['id']}/reclassify").json()
+        assert result["changed"] == 2
+        assert result["row_counts"] == {"ready": 2, "needs_payee": 1}
+
+        after = client.get(f"/api/import/batches/{batch['id']}").json()
+        assert {r["payee_name"] for r in after["rows"] if r["payee_name"]} == {"Expedia"}
+
+    def test_answers_already_given_are_not_undone(self, client, profile):
+        batch = preview(client, profile, self.CONTENT).json()
+        qfc_row = next(r for r in batch["rows"] if r["description"] == "QFC")
+        client.put(
+            f"/api/import/rows/{qfc_row['id']}", json={"create_payee_name": "QFC Groceries"}
+        )
+        # A regex that would also claim that row, added afterwards.
+        other = client.post("/api/payees", json={"name": "Wrong"}).json()
+        client.post(
+            f"/api/payees/{other['id']}/aliases", json={"pattern": ".*", "match_type": "regex"}
+        )
+        client.post(f"/api/import/batches/{batch['id']}/reclassify")
+
+        after = client.get(f"/api/import/batches/{batch['id']}").json()
+        kept = next(r for r in after["rows"] if r["description"] == "QFC")
+        assert kept["payee_name"] == "QFC Groceries"
+
+    def test_a_new_transfer_rule_is_picked_up_too(self, client, profile, savings):
+        batch = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,TO SAVINGS,-500.00\n"
+        ).json()
+        assert batch["rows"][0]["status"] == "needs_payee"
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "TO SAVINGS", "match_type": "contains", "account_id": savings["id"]},
+        )
+        client.post(f"/api/import/batches/{batch['id']}/reclassify")
+        after = client.get(f"/api/import/batches/{batch['id']}").json()
+        assert after["rows"][0]["status"] == "transfer"
+        assert after["rows"][0]["transfer_account_id"] == savings["id"]
+
+    def test_reclassifying_changes_nothing_when_no_rules_changed(self, client, profile):
+        batch = preview(client, profile, self.CONTENT).json()
+        assert client.post(f"/api/import/batches/{batch['id']}/reclassify").json()["changed"] == 0
+
+    def test_a_committed_batch_cannot_be_reclassified(self, client, profile):
+        batch = preview(client, profile, self.CONTENT).json()
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+        response = client.post(f"/api/import/batches/{batch['id']}/reclassify")
+        assert response.status_code == 422
+
+
+class TestDescriptionBecomesThePayee:
+    def test_unanswered_rows_are_filed_under_their_description(self, client, profile):
+        batch = preview(
+            client, profile,
+            "Date,Description,Amount\n08/01/2026,QFC,-60.61\n08/02/2026,Service Charge,-6.00\n",
+        ).json()
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+        names = {p["name"] for p in client.get("/api/payees").json()}
+        assert {"QFC", "Service Charge"} <= names
+        txns = client.get("/api/transactions").json()
+        assert {t["payee_name"] for t in txns} == {"QFC", "Service Charge"}
+
+    def test_an_existing_payee_of_that_name_is_reused(self, client, profile):
+        made = client.post("/api/payees", json={"name": "QFC"}).json()
+        batch = preview(client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n").json()
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+        matching = [p for p in client.get("/api/payees").json() if p["name"] == "QFC"]
+        assert [p["id"] for p in matching] == [made["id"]]
+
+    def test_a_chosen_payee_still_wins(self, client, profile):
+        batch = preview(client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n").json()
+        client.put(
+            f"/api/import/rows/{batch['rows'][0]['id']}",
+            json={"create_payee_name": "Quality Food Centers"},
+        )
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+        assert client.get("/api/transactions").json()[0]["payee_name"] == "Quality Food Centers"
+
+    def test_it_can_be_turned_off(self, client, profile):
+        batch = preview(client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n").json()
+        client.post(
+            f"/api/import/batches/{batch['id']}/commit",
+            params={"name_payees_from_descriptions": False},
+        )
+        assert client.get("/api/transactions").json()[0]["payee_name"] is None
+        assert "QFC" not in {p["name"] for p in client.get("/api/payees").json()}
+
+    def test_transfers_never_get_a_description_payee(self, client, profile, savings):
+        client.post(
+            "/api/transfer-rules",
+            json={"pattern": "TO SAVINGS", "match_type": "contains", "account_id": savings["id"]},
+        )
+        batch = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,TO SAVINGS,-500.00\n"
+        ).json()
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+        assert "TO SAVINGS" not in {p["name"] for p in client.get("/api/payees").json()}

@@ -55,6 +55,16 @@ file is validated before anything is written, and a row counts as a duplicate
 only when *that account has already imported it* — never because the file
 repeats itself.
 
+## Editing in bulk
+
+Two screens exist so a year of imported rows never has to be filed one at a
+time: the import review page answers *per distinct description* and can be
+re-scanned mid-review when a new alias is written, and **Search** filters the
+register and applies one category/payee/status to everything ticked. Bulk
+recategorizing refuses to touch a split transaction or a transfer and reports
+what it left alone, rather than guessing which category was meant and quietly
+destroying how the money was divided.
+
 ## Data ownership
 
 One PostgreSQL container, one database and one DB user per service

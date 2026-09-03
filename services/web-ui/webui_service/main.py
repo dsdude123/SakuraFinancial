@@ -167,6 +167,7 @@ def create_app(
         receipts_pages,
         reports,
         reset,
+        search,
         setup,
         settings_pages,
         stocks_pages,
@@ -189,6 +190,7 @@ def create_app(
         backup,
         reset,
         errors,
+        search,
     ):
         app.include_router(module.router)
     return app

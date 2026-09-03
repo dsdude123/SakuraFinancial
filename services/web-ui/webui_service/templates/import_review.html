@@ -114,16 +114,34 @@ picks income or expense from the sign of the rows.</p>
 </table>
 
 <br>
-<form method="post" action="/import/batches/bank/{{ batch.id }}/commit" style="display: inline">
+<div class="panel">
+  <form method="post" action="/import/batches/bank/{{ batch.id }}/reclassify">
+    <input type="submit" class="btn" value="Re-scan against current rules">
+    <span class="small dim">Spotted a pattern and added a payee alias or
+    transfer rule just now? This re-runs the unanswered rows against the rules
+    as they stand, so you don't have to discard the batch and upload the file
+    again. Rows you have already answered are left alone.</span>
+  </form>
+</div>
+
+<form method="post" action="/import/batches/bank/{{ batch.id }}/commit">
+  <input type="checkbox" name="name_from_description" id="name_from_description" checked>
+  <label for="name_from_description">For rows with no payee, use the bank
+  description as the payee name</label>
+  <br>
   <input type="submit" class="btn btn-primary" value="Import {{ batch.total_rows }} rows now">
 </form>
-<form method="post" action="/import/batches/bank/{{ batch.id }}/abort" style="display: inline">
+<form method="post" action="/import/batches/bank/{{ batch.id }}/abort">
   <input type="submit" class="btn" value="Discard everything">
 </form>
 <p class="small dim">Unchecked rows are skipped. Rows this account has already
 imported are unchecked for you; re-check one to force it in. Two identical
 transactions on the same day in one file are both real &mdash; they are not
 treated as duplicates of each other.</p>
+<p class="small dim">Plenty of descriptions already are the payee ("QFC",
+"Service Charge"), so unless you untick the box above, any row you left without
+one is filed under its description rather than under nothing at all. An
+existing payee of that name is reused.</p>
 <p class="small dim">A row marked <b>other side of a transfer</b> is the far leg of a
 transfer already recorded from the first account's statement, matched by amount
 inside the transfer rule's window. Importing it would book the same movement

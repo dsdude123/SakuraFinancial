@@ -258,13 +258,39 @@ async def stock_row_update(request: Request, row_id: int, batch_id: int = Form(.
     return back(f"/import/batches/stock/{batch_id}", msg="Row updated")
 
 
+@router.post("/import/batches/bank/{batch_id}/reclassify")
+async def batch_reclassify(request: Request, batch_id: int):
+    """Re-run the batch against the rules as they stand now, so an alias added
+    mid-review takes effect without discarding and re-uploading the file."""
+    try:
+        result = await request.app.state.clients.ledger.post(
+            f"/api/import/batches/{batch_id}/reclassify"
+        )
+    except ServiceError as exc:
+        return back(f"/import/batches/bank/{batch_id}", err=str(exc.detail))
+    if not result["changed"]:
+        return back(
+            f"/import/batches/bank/{batch_id}",
+            msg="Re-scanned: no unanswered row matched anything new.",
+        )
+    return back(
+        f"/import/batches/bank/{batch_id}",
+        msg=f"Re-scanned: {result['changed']} row(s) picked up a payee or rule.",
+    )
+
+
 @router.post("/import/batches/{kind}/{batch_id}/commit")
-async def batch_commit(request: Request, kind: str, batch_id: int):
+async def batch_commit(
+    request: Request, kind: str, batch_id: int, name_from_description: str = Form("")
+):
     if kind not in KINDS:
         return back("/import", err=f"unknown import kind {kind!r}")
+    params = {}
+    if kind == "bank":
+        params["name_payees_from_descriptions"] = name_from_description == "on"
     try:
-        summary = await service_for(request, kind).post(
-            f"/api/import/batches/{batch_id}/commit"
+        summary = await service_for(request, kind).request(
+            "POST", f"/api/import/batches/{batch_id}/commit", params=params
         )
     except ServiceError as exc:
         return back(f"/import/batches/{kind}/{batch_id}", err=str(exc.detail))

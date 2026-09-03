@@ -337,14 +337,39 @@ def resolve_group(batch_id: int, body: GroupResolve, db: Session = Depends(get_d
     }
 
 
+@router.post("/import/batches/{batch_id}/reclassify")
+def reclassify(batch_id: int, db: Session = Depends(get_db)):
+    """Re-run classification over a batch still in review, picking up payee
+    aliases and transfer rules added since it was uploaded. Rows already
+    answered are untouched, so no manual work is lost and there is no need to
+    discard the batch and upload the file again."""
+    batch = db.get(ImportBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, f"Import batch {batch_id} no longer exists.")
+    if batch.status != "review":
+        raise HTTPException(
+            422, f"That batch has already been {batch.status}; its rows can no longer change."
+        )
+    result = import_logic.reclassify_batch(db, batch)
+    db.commit()
+    return result
+
+
 @router.post("/import/batches/{batch_id}/commit")
-def commit(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+def commit(
+    batch_id: int,
+    background: BackgroundTasks,
+    name_payees_from_descriptions: bool = True,
+    db: Session = Depends(get_db),
+):
     batch = db.get(ImportBatch, batch_id)
     if batch is None:
         raise HTTPException(404, f"Import batch {batch_id} no longer exists.")
     if batch.status != "review":
         raise HTTPException(422, f"That batch has already been {batch.status}.")
-    summary = import_logic.commit_batch(db, batch)
+    summary = import_logic.commit_batch(
+        db, batch, name_payees_from_descriptions=name_payees_from_descriptions
+    )
     db.commit()
     background.add_task(import_logic.ping_receipts_service)
     return summary

@@ -441,3 +441,84 @@ class TestErrorPage:
         # arrives in a later phase, so exercise via home (receipts panel hides).
         page = logged_in.get("/")
         assert page.status_code == 200
+
+
+class TestReprocessAndPayeeFallback:
+    """Two things that used to force a discard-and-re-upload."""
+
+    def seed(self, logged_in):
+        logged_in.post(
+            "/accounts",
+            data={"name": "Checking", "type": "checking", "currency_code": "USD",
+                  "opening_balance": "0", "note": ""},
+        )
+        logged_in.post(
+            "/import/profiles",
+            data={
+                "name": "Bank", "kind": "bank", "account_id": "1", "delimiter": ",",
+                "has_header": "on", "skip_top_rows": "0", "date_column": "date",
+                "date_format": "%m/%d/%Y", "description_column": "description",
+                "amount_mode": "single", "amount_column": "amount",
+            },
+        )
+        content = (
+            "Date,Description,Amount\n"
+            "08/01/2026,EXPEDIA INC. 00000000000000004085 - DIR DEP,-120.00\n"
+            "08/02/2026,EXPEDIA INC. 00000000000000009912 - DIR DEP,-340.00\n"
+            "08/03/2026,QFC,-60.61\n"
+        )
+        logged_in.post(
+            "/import/preview",
+            data={"profile_id": "bank:1", "account_id": ""},
+            files={"file": ("aug.csv", content, "text/csv")},
+        )
+
+    def test_the_review_page_offers_a_re_scan(self, logged_in):
+        self.seed(logged_in)
+        page = logged_in.get("/import/batches/bank/1")
+        assert 'value="Re-scan against current rules"' in page.text
+
+    def test_an_alias_added_mid_review_is_picked_up(self, logged_in, ledger_api):
+        self.seed(logged_in)
+        payee = ledger_api.post("/api/payees", json={"name": "Expedia"}).json()
+        logged_in.post(
+            f"/payees/{payee['id']}/aliases",
+            data={"pattern": r"^EXPEDIA INC\. \d+ - DIR DEP$", "match_type": "regex"},
+        )
+        response = logged_in.post(
+            "/import/batches/bank/1/reclassify", follow_redirects=False
+        )
+        assert response.status_code == 303
+        assert "2%20row" in response.headers["location"]
+
+        batch = ledger_api.get("/api/import/batches/1").json()
+        assert batch["row_counts"] == {"ready": 2, "needs_payee": 1}
+
+    def test_a_re_scan_that_finds_nothing_says_so(self, logged_in):
+        self.seed(logged_in)
+        response = logged_in.post(
+            "/import/batches/bank/1/reclassify", follow_redirects=False
+        )
+        assert "no%20unanswered%20row" in response.headers["location"]
+
+    def test_the_commit_form_offers_the_description_fallback(self, logged_in):
+        self.seed(logged_in)
+        page = logged_in.get("/import/batches/bank/1")
+        assert 'name="name_from_description"' in page.text
+        assert "use the bank" in page.text
+
+    def test_committing_with_it_ticked_names_payees_after_descriptions(
+        self, logged_in, ledger_api
+    ):
+        self.seed(logged_in)
+        logged_in.post(
+            "/import/batches/bank/1/commit", data={"name_from_description": "on"}
+        )
+        names = {p["name"] for p in ledger_api.get("/api/payees").json()}
+        assert "QFC" in names
+
+    def test_unticking_it_leaves_them_without_a_payee(self, logged_in, ledger_api):
+        self.seed(logged_in)
+        logged_in.post("/import/batches/bank/1/commit", data={})
+        assert "QFC" not in {p["name"] for p in ledger_api.get("/api/payees").json()}
+        assert all(t["payee_name"] is None for t in ledger_api.get("/api/transactions").json())
