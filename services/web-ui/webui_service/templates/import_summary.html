@@ -11,6 +11,32 @@
   find them via the register or Home &rsaquo; To do.{% endif %}
 </div>
 
+{% if summary.settlement and summary.settlement.settled %}
+<div class="msg">{{ summary.settlement.settled }} of those transfer(s) moved cash
+into or out of an investment account; both sides are recorded.</div>
+{% endif %}
+
+{% if summary.settlement and summary.settlement.dropped %}
+<div class="warnpanel">
+  <b>(!) {{ summary.settlement.dropped|length }} transfer(s) to an investment
+  account could not be completed</b>, so they were left out entirely rather than
+  taking money out of the bank account and putting it nowhere. Import the
+  statement again once the problem below is fixed &mdash; those rows will be
+  offered afresh.
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Date</th><th class="num">Amount</th><th>Account</th><th>Why</th></tr>
+    {% for d in summary.settlement.dropped %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td>{{ d.date }}</td>
+      <td class="num">{{ d.amount|money }}</td>
+      <td>{{ d.external_account }}</td>
+      <td class="small">{{ d.reason }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
 {% if summary.amount_review %}
 <div class="warnpanel">
   <b>(!) Fixed bills were charged different amounts.</b> Decide for each:

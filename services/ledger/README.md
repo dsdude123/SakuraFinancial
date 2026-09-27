@@ -29,6 +29,11 @@ here. Live OpenAPI docs at `/docs` on the service port.
 - **Transfers** are paired transactions sharing `transfer_group_id`, splits
   have no category, and they never appear in spending/cash-flow reports.
   Deleting one leg deletes both.
+- **Transfer rules** can name an investment account too (`external_account`
+  instead of `account_id`), so a wire to a brokerage imports as a transfer
+  rather than as invented spending. Commit writes this side's leg and returns
+  the settlements left to make in the other service as `external_transfers`;
+  the caller books them and deletes any leg the other service refuses.
 - **Transfers to an investment account** (`POST /api/transfers/external`) have
   only one leg here: the far account belongs to the stocks service, so the leg
   records its ref in `external_account` ("stock:1") and the caller books the

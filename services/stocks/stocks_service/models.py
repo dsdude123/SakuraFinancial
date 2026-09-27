@@ -210,7 +210,10 @@ class StockImportRow(Base):
     amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     row_hash: Mapped[str] = mapped_column(String(64), index=True)
-    status: Mapped[str] = mapped_column(String(12), default="ready")  # ready|duplicate
+    # ready | duplicate (already imported here) | no_lots (a sale of shares the
+    # account doesn't hold) | counterpart (the far side of a bank transfer that
+    # is already booked, so importing it would credit the money twice)
+    status: Mapped[str] = mapped_column(String(12), default="ready")
     include: Mapped[bool] = mapped_column(Boolean, default=True)
     transaction_id: Mapped[int | None] = mapped_column(
         ForeignKey("stock_transactions.id"), nullable=True

@@ -108,6 +108,7 @@ def create_external_transfer(
     direction: str = "out",
     memo: str = "",
     transfer_group_id: str | None = None,
+    import_hash: str | None = None,
 ) -> Transaction:
     """One leg of a transfer whose other side is not a ledger account.
 
@@ -139,6 +140,7 @@ def create_external_transfer(
         kind="transfer",
         transfer_group_id=transfer_group_id or str(uuid.uuid4()),
         external_account=external_account.strip(),
+        import_hash=import_hash,
         splits=[{"category_id": None, "amount": signed}],
     )
 

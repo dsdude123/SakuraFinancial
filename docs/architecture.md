@@ -84,6 +84,30 @@ remove by hand — half a transfer is worth shouting about. Either end can start
 the transfer (the register's transfer form, or the stock account page) and
 deleting either row removes the other.
 
+### Imports cross the same seam
+
+A transfer rule can name an investment account, so the monthly wire to a
+brokerage imports as a transfer rather than as invented spending. Committing the
+batch is one ledger transaction, so the ledger writes its legs and returns the
+settlements still to make (`external_transfers` in the commit summary); the web
+UI books each one in the stocks service immediately afterwards. A leg the stocks
+service refuses is deleted again — along with the import row's claim on it, so
+re-uploading that statement offers the row afresh — and the summary page says
+which rows were dropped and why. The ledger never calls the stocks service
+itself; the same rule as elsewhere.
+
+Both statements of one movement usually get imported eventually, so each
+importer recognises the other's work:
+
+- the **bank** importer flags a row as `counterpart` when a transfer of that
+  amount, to that same investment account, is already recorded within the rule's
+  window (it was entered by hand, or imported before),
+- the **broker** importer flags a `deposit`/`withdraw` as `counterpart` when it
+  matches a cash row that carries an `external_account` — money a bank import
+  already moved in. A deposit nobody linked is left alone, because nothing says
+  the imported row is that one. Its window is `transfer_match_days` in the
+  profile config, 5 days by default.
+
 ## Editing in bulk
 
 Two screens exist so a year of imported rows never has to be filed one at a

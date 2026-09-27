@@ -195,6 +195,7 @@ def export_core(db: Session) -> dict:
                 "pattern": r.pattern,
                 "match_type": r.match_type,
                 "account_id": r.account_id,
+                "external_account": r.external_account,
                 "active": r.active,
                 "match_days": r.match_days,
             }
@@ -276,7 +277,8 @@ def import_core(db: Session, data: dict) -> dict:
                 id=r["id"],
                 pattern=r["pattern"],
                 match_type=r.get("match_type", "prefix"),
-                account_id=r["account_id"],
+                account_id=r.get("account_id"),
+                external_account=r.get("external_account"),
                 active=r.get("active", True),
                 match_days=r.get("match_days", 5),
             )

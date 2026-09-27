@@ -242,23 +242,34 @@ class BillOccurrence(Base):
 
 
 class TransferRule(Base):
-    """Imported descriptions matching the pattern become transfers to/from
-    ``account_id`` instead of categorized transactions (PAYPAL, VENMO,
-    credit-card payments...). Patterns match the normalized description."""
+    """Imported descriptions matching the pattern become transfers to/from the
+    rule's counter account instead of categorized transactions (PAYPAL, VENMO,
+    credit-card payments, the monthly wire to a brokerage...). Patterns match
+    the normalized description.
+
+    The counter account is **either** a ledger account (``account_id``) or an
+    account another service owns (``external_account``, e.g. "stock:1" for an
+    investment account) — exactly one of the two. An external rule makes the
+    import book a one-legged transfer whose far side the caller settles in the
+    other service, the same shape a manual transfer to a brokerage takes.
+    """
 
     __tablename__ = "transfer_rules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pattern: Mapped[str] = mapped_column(String(300))
     match_type: Mapped[str] = mapped_column(String(10), default="prefix")
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    # NULL when the counter account is external; see external_account. Old
+    # databases have this NOT NULL, which sync_schema relaxes on boot.
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    external_account: Mapped[str | None] = mapped_column(String(30), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # How far apart the two sides of one transfer may be dated. Money leaving
     # on a Friday can land in the other account the following Tuesday, and both
     # statements report their own date, so matching needs slack.
     match_days: Mapped[int] = mapped_column(Integer, default=5)
 
-    account: Mapped[Account] = relationship()
+    account: Mapped[Account | None] = relationship()
 
 
 class ImportProfile(Base):
@@ -316,6 +327,9 @@ class ImportRow(Base):
     payee_id: Mapped[int | None] = mapped_column(ForeignKey("payees.id"), nullable=True)
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     transfer_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    # The counterparty when it isn't a ledger account: "stock:1". Mutually
+    # exclusive with transfer_account_id, like the rule that set it.
+    transfer_external_account: Mapped[str | None] = mapped_column(String(30), nullable=True)
     learn_alias: Mapped[bool] = mapped_column(Boolean, default=False)
     transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), nullable=True)
 

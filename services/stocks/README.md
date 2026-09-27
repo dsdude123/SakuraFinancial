@@ -44,6 +44,13 @@ rejects the whole file with instructions to extend the map — nothing imports
 until every row resolves. Committed rows apply full portfolio effects
 (lots, FIFO, cash) oldest-first; re-uploads dedupe by row hash.
 
+A cash row that is the far side of a bank transfer already booked here (the bank
+statement was imported first, and that import credited this account) is flagged
+`counterpart` and left out, so importing both statements doesn't count the money
+twice. The match is on amount within `transfer_match_days` of the profile config
+(default 5), and only against rows carrying an `external_account` — a deposit
+someone typed in is left alone.
+
 ## Analysis (on demand only)
 
 `POST /api/analyze {account_id}` gathers holdings, 52-week price summaries,

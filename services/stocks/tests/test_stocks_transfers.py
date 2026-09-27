@@ -141,3 +141,146 @@ def test_a_backup_round_trip_keeps_the_link(client, brokerage):
     restored = client.get("/api/transactions").json()[0]
     assert restored["transfer_group_id"] == "group-1"
     assert restored["external_account"] == "bank:3"
+
+
+class TestBrokerImportsDoNotDoubleCount:
+    """Both statements describe one movement. The bank import books both sides,
+    so the broker's own line for the same wire has to be recognised — its row
+    hash never will be, because that row was never imported here."""
+
+    PROFILE_CONFIG = {
+        "date_column": "date",
+        "date_format": "%m/%d/%Y",
+        "action_column": "type",
+        "symbol_column": "symbol",
+        "quantity_column": "qty",
+        "price_column": "price",
+        "amount_column": "amount",
+        "action_map": {"WIRE IN": "deposit", "WIRE OUT": "withdraw", "Bought": "buy"},
+    }
+
+    def profile(self, client, account, **config):
+        return client.post(
+            "/api/import/profiles",
+            json={
+                "name": f"Broker {len(config)}",
+                "account_id": account["id"],
+                "config": {**self.PROFILE_CONFIG, **config},
+            },
+        ).json()
+
+    def preview(self, client, profile, content):
+        return client.post(
+            "/api/import/preview",
+            json={"profile_id": profile["id"], "filename": "activity.csv", "content": content},
+        ).json()
+
+    def wire_in(self, date="09/10/2026", amount="2500.00"):
+        return f"Date,Type,Symbol,Qty,Price,Amount\n{date},WIRE IN,,,,{amount}\n"
+
+    def test_the_far_side_of_a_booked_transfer_is_flagged(self, client, brokerage):
+        transfer(client, brokerage)  # as the bank import would have booked it
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in())["rows"][0]
+        assert row["status"] == "counterpart"
+        assert row["include"] is False
+
+    def test_committing_it_changes_nothing(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        batch = self.preview(client, profile, self.wire_in())
+        summary = client.post(f"/api/import/batches/{batch['id']}/commit").json()
+        assert summary["created"] == 0
+        assert client.get(f"/api/accounts/{brokerage['id']}").json()["cash"] == "12500.00"
+
+    def test_a_few_days_apart_still_matches(self, client, brokerage):
+        """The bank posts on the Friday, the broker on the Tuesday."""
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in(date="09/14/2026"))["rows"][0]
+        assert row["status"] == "counterpart"
+
+    def test_outside_the_window_it_is_new_money(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in(date="09/30/2026"))["rows"][0]
+        assert row["status"] == "ready"
+
+    def test_the_window_is_configurable(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage, transfer_match_days=30)
+        row = self.preview(client, profile, self.wire_in(date="09/30/2026"))["rows"][0]
+        assert row["status"] == "counterpart"
+
+    def test_a_different_amount_is_new_money(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in(amount="99.00"))["rows"][0]
+        assert row["status"] == "ready"
+
+    def test_a_deposit_nobody_linked_is_left_alone(self, client, brokerage):
+        """A deposit typed in by hand says nothing about where it came from, so
+        an imported row is not assumed to be it."""
+        client.post(
+            "/api/transactions",
+            json={
+                "account_id": brokerage["id"],
+                "type": "deposit",
+                "date": "2026-09-10",
+                "amount": "2500.00",
+            },
+        )
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in())["rows"][0]
+        assert row["status"] == "ready"
+
+    def test_two_identical_lines_claim_two_different_transfers(self, client, brokerage):
+        transfer(client, brokerage, transfer_group_id="group-1")
+        transfer(client, brokerage, transfer_group_id="group-2")
+        profile = self.profile(client, brokerage)
+        batch = self.preview(
+            client,
+            profile,
+            "Date,Type,Symbol,Qty,Price,Amount\n"
+            "09/10/2026,WIRE IN,,,,2500.00\n"
+            "09/11/2026,WIRE IN,,,,2500.00\n",
+        )
+        assert [r["status"] for r in batch["rows"]] == ["counterpart", "counterpart"]
+
+    def test_a_third_line_beyond_the_booked_transfers_is_new_money(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        batch = self.preview(
+            client,
+            profile,
+            "Date,Type,Symbol,Qty,Price,Amount\n"
+            "09/10/2026,WIRE IN,,,,2500.00\n"
+            "09/11/2026,WIRE IN,,,,2500.00\n",
+        )
+        assert [r["status"] for r in batch["rows"]] == ["counterpart", "ready"]
+
+    def test_withdrawals_match_the_same_way(self, client, brokerage):
+        transfer(client, brokerage, direction="out", amount="300.00")
+        profile = self.profile(client, brokerage)
+        row = self.preview(
+            client,
+            profile,
+            "Date,Type,Symbol,Qty,Price,Amount\n09/10/2026,WIRE OUT,,,,300.00\n",
+        )["rows"][0]
+        assert row["status"] == "counterpart"
+
+    def test_a_deposit_is_not_matched_against_a_withdrawal(self, client, brokerage):
+        transfer(client, brokerage, direction="out", amount="2500.00")
+        profile = self.profile(client, brokerage)
+        row = self.preview(client, profile, self.wire_in())["rows"][0]
+        assert row["status"] == "ready"
+
+    def test_trades_are_untouched_by_any_of_this(self, client, brokerage):
+        transfer(client, brokerage)
+        profile = self.profile(client, brokerage)
+        batch = self.preview(
+            client,
+            profile,
+            "Date,Type,Symbol,Qty,Price,Amount\n09/10/2026,Bought,AAPL,10,150.00,1500.00\n",
+        )
+        assert batch["rows"][0]["status"] == "ready"

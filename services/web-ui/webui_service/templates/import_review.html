@@ -86,8 +86,11 @@ picks income or expense from the sign of the rows.</p>
           &#8596;
           <select name="transfer_account_id">
             {% for a in accounts %}{% if a.id != batch.account_id %}
-              <option value="{{ a.id }}" {% if r.transfer_account_id == a.id %}selected{% endif %}>{{ a.name }}</option>
+              <option value="bank:{{ a.id }}" {% if r.transfer_account_id == a.id %}selected{% endif %}>{{ a.name }}</option>
             {% endif %}{% endfor %}
+            {% for a in stock_accounts %}
+              <option value="stock:{{ a.id }}" {% if r.transfer_external_account == 'stock:' ~ a.id %}selected{% endif %}>{{ a.name }} &mdash; investment</option>
+            {% endfor %}
           </select>
         {% else %}
           <select name="payee_id">

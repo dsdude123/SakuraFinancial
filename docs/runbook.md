@@ -88,15 +88,22 @@ know exactly why you're not.
 
 ## Schema upgrades and self-repair
 
-Every service runs `sakura_common.schema.sync_schema` at boot. It does two
-things, both additive and both safe to repeat:
+Every service runs `sakura_common.schema.sync_schema` at boot. It does three
+things, all of them widening or forward-only, and all safe to repeat:
 
 1. **`add_missing_columns`** issues `ALTER TABLE ... ADD COLUMN` for anything
    the models declare and the database lacks. `create_all` makes missing
    tables but never alters an existing one, so without this a newly shipped
    column leaves an upgraded install throwing `UndefinedColumn` on the first
    query. It only adds — never drops, renames or retypes.
-2. **`resync_sequences`** drags any `id` sequence that has fallen behind its
+2. **`relax_nullable_columns`** issues `ALTER TABLE ... ALTER COLUMN ... DROP
+   NOT NULL` where the models have made a column optional but the live table
+   still demands a value. A column can stop being required —
+   `transfer_rules.account_id` did, once a rule could point at an investment
+   account instead of a ledger one — and on a database created before that
+   change the first such row would die on a not-null violation. It only ever
+   widens: it never adds a NOT NULL, and never touches a primary key.
+3. **`resync_sequences`** drags any `id` sequence that has fallen behind its
    table back past `MAX(id)`. Postgres sequences are **not transactional**: a
    `setval` survives a rollback, so a restore or reset that rewinds the
    counters and then fails leaves the rows in place with their sequences at 1,

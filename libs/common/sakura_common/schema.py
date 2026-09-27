@@ -1,9 +1,11 @@
-"""Boot-time schema repair: additive column sync and sequence resync.
+"""Boot-time schema repair: additive column sync, NOT NULL relaxation, and
+sequence resync.
 
 Services call ``Base.metadata.create_all`` on start, which creates missing
-tables but never touches an existing one. These two helpers cover the gaps
-that actually bite a running install, and both are safe to run every boot:
-they only ever add or move forward, never drop, rename, retype, or rewind.
+tables but never touches an existing one. These helpers cover the gaps that
+actually bite a running install, and all are safe to run every boot: they only
+ever add, widen, or move forward — never drop, rename, retype, tighten, or
+rewind.
 """
 
 from __future__ import annotations
@@ -46,6 +48,55 @@ def add_missing_columns(engine, base) -> list[str]:
                 connection.execute(text(clause))
                 added.append(f"{name}.{column.name}")
     return added
+
+
+def relax_nullable_columns(engine, base) -> list[str]:
+    """``ALTER TABLE ... ALTER COLUMN ... DROP NOT NULL`` where the models now
+    say a column is optional but the live table still demands a value.
+
+    The case this shipped for: ``transfer_rules.account_id`` was required while
+    the only counterparty a rule could name was another ledger account. Now a
+    rule can point at an investment account instead, and the column has to be
+    allowed to sit empty — on databases created before the change too, or the
+    first such rule dies on a not-null violation.
+
+    Only ever *widens*: this never adds a NOT NULL, which would fail outright on
+    a table that already holds empty values. Primary keys are left alone
+    whatever the model says.
+    """
+    if engine.dialect.name != "postgresql":
+        # SQLite can't ALTER a column's nullability, and a table create_all
+        # just made already matches the model.
+        return []
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    relaxed: list[str] = []
+    with engine.begin() as connection:
+        for name, table in base.metadata.tables.items():
+            if name not in existing_tables:
+                continue
+            for column_name in columns_to_relax(table, inspector.get_columns(name)):
+                connection.execute(
+                    text(f'ALTER TABLE {name} ALTER COLUMN "{column_name}" DROP NOT NULL')
+                )
+                relaxed.append(f"{name}.{column_name}")
+    return relaxed
+
+
+def columns_to_relax(table, live_columns) -> list[str]:
+    """Which of ``table``'s columns the database still demands a value for
+    although the model no longer does. ``live_columns`` is what the inspector
+    reports for the table."""
+    live = {column["name"]: column for column in live_columns}
+    names = []
+    for column in table.columns:
+        if column.primary_key or not column.nullable:
+            continue
+        current = live.get(column.name)
+        if current is None or current.get("nullable", True):
+            continue
+        names.append(column.name)
+    return names
 
 
 def resync_sequences(engine, base) -> list[str]:
@@ -94,11 +145,16 @@ def resync_sequences(engine, base) -> list[str]:
 
 
 def sync_schema(engine, base, service: str = "") -> dict[str, list[str]]:
-    """Both repairs, logged. Call once at start-up after ``create_all``."""
+    """Every repair, logged. Call once at start-up after ``create_all``."""
     added = add_missing_columns(engine, base)
+    relaxed = relax_nullable_columns(engine, base)
     repaired = resync_sequences(engine, base)
     if added:
         logger.info("%s: added columns %s", service or "schema", ", ".join(added))
+    if relaxed:
+        logger.info(
+            "%s: columns no longer required, relaxed %s", service or "schema", ", ".join(relaxed)
+        )
     if repaired:
         logger.warning(
             "%s: id sequences were behind their tables and have been repaired (%s). "
@@ -106,4 +162,8 @@ def sync_schema(engine, base, service: str = "") -> dict[str, list[str]]:
             service or "schema",
             "; ".join(repaired),
         )
-    return {"added_columns": added, "repaired_sequences": repaired}
+    return {
+        "added_columns": added,
+        "relaxed_columns": relaxed,
+        "repaired_sequences": repaired,
+    }

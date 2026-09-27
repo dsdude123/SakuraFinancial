@@ -56,6 +56,10 @@
 <p class="small dim">Unchecked rows are skipped. Rows this account has already
 imported are unchecked for you; re-check one to force it in. Buys are applied
 oldest-first so a sale later in the same file draws on the right lots.</p>
+<p class="small dim">A cash row marked <b>other side of a transfer</b> is money
+a bank statement already moved into (or out of) this account &mdash; that import
+booked both sides, so importing this line as well would count the same money
+twice. Re-check it only if the two really are different movements.</p>
 {% else %}
 <div class="msg">This batch is {{ batch.status }}.</div>
 {% endif %}

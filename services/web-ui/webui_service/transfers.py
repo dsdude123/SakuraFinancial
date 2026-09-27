@@ -142,6 +142,56 @@ async def transfer_bank_stock(
     }
 
 
+async def settle_import_transfers(clients, summary: dict) -> dict:
+    """Book the far side of every investment transfer a bank import just made.
+
+    The ledger commits its legs in one transaction and reports what is left to
+    settle (``external_transfers``); this is the other half. Each leg is settled
+    on its own, and a leg the other service refuses is deleted again rather than
+    left as money that went nowhere — the import row it came from is released
+    with it, so re-uploading that statement offers the row again.
+
+    Returns what to tell the user: how many were settled, and the ones that were
+    not with the reason.
+    """
+    settled = 0
+    dropped: list[dict] = []
+    for pending in summary.get("external_transfers", []):
+        ref = pending["external_account"]
+        kind, _, ident = ref.partition(":")
+        if kind != "stock" or not ident.isdigit():
+            dropped.append({**pending, "reason": f"unknown account {ref!r}"})
+            continue
+        try:
+            await clients.stocks.post(
+                "/api/transfers/external",
+                json={
+                    "account_id": int(ident),
+                    "date": pending["date"],
+                    "amount": pending["amount"],
+                    # The ledger leg's direction is the bank account's: money
+                    # leaving it arrives in the investment account.
+                    "direction": "in" if pending["direction"] == "out" else "out",
+                    "external_account": join_ref("bank", summary["account_id"]),
+                    "transfer_group_id": pending["transfer_group_id"],
+                    "note": pending.get("memo", ""),
+                },
+            )
+        except ServiceError as exc:
+            reason = str(exc.detail)
+            try:
+                await clients.ledger.delete(f"/api/transactions/{pending['transaction_id']}")
+            except ServiceError as undo_exc:
+                reason = (
+                    f"{reason}; and the bank side could not be undone ({undo_exc.detail}) "
+                    f"- delete transaction {pending['transaction_id']} by hand"
+                )
+            dropped.append({**pending, "reason": reason})
+            continue
+        settled += 1
+    return {"settled": settled, "dropped": dropped}
+
+
 async def delete_external_counterpart(clients, deleted: dict) -> None:
     """Remove the far side of a transfer whose ledger leg has just been deleted.
 

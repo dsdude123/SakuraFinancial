@@ -6,6 +6,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
@@ -18,6 +19,7 @@ from ..logic.transactions import (
 from ..models import (
     Account,
     Category,
+    ImportRow,
     Payee,
     Split,
     TRANSACTION_STATUSES,
@@ -224,6 +226,21 @@ def set_splits(transaction_id: int, body: SplitsReplaceIn, db: Session = Depends
 def delete(transaction_id: int, db: Session = Depends(get_db)):
     txn = load_txn_or_404(db, transaction_id)
     deleted = [txn.id]
+
+    def release_import_rows(ids: list[int]) -> None:
+        """Let go of the review rows that produced these transactions.
+
+        ``import_rows.transaction_id`` is a real foreign key, so deleting an
+        imported transaction without clearing it fails outright on Postgres.
+        Clearing it also leaves the truth: that row's money is no longer in the
+        register, so re-importing the statement offers it again instead of
+        calling it a duplicate.
+        """
+        db.execute(
+            sql_update(ImportRow)
+            .where(ImportRow.transaction_id.in_(ids))
+            .values(transaction_id=None)
+        )
     if txn.transfer_group_id:
         # Transfers are atomic pairs; removing one leg removes both.
         for leg in db.execute(
@@ -233,6 +250,7 @@ def delete(transaction_id: int, db: Session = Depends(get_db)):
                 deleted.append(leg.id)
                 db.delete(leg)
     external_account, group = txn.external_account, txn.transfer_group_id
+    release_import_rows(deleted)
     db.delete(txn)
     db.commit()
     # A leg whose other side lives in another service can't be deleted from

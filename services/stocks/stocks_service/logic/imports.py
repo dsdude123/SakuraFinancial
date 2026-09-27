@@ -1,10 +1,19 @@
 """Stock CSV import: same all-or-nothing pipeline as bank imports, plus the
 per-profile action map (broker strings -> internal actions). Parsing failures
-— including an unmapped action string — abort before anything is stored."""
+— including an unmapped action string — abort before anything is stored.
+
+Cash rows get one extra check the bank importer also does: a deposit or
+withdrawal that is really the far side of a bank transfer already recorded here
+(the bank statement was imported first, and that import booked the money into
+this account) is flagged ``counterpart`` and left out, instead of crediting the
+same money twice. The two statements rarely agree on the date, so the match has
+a window — ``transfer_match_days`` in the profile config, 5 days by default.
+"""
 
 from __future__ import annotations
 
 import hashlib
+from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -43,6 +52,53 @@ def row_hash(account_id: int, parsed: ParsedStockRow) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+DEFAULT_TRANSFER_MATCH_DAYS = 5
+
+
+def find_transfer_counterpart(
+    db: Session,
+    *,
+    account: InvestmentAccount,
+    action: str,
+    amount: Decimal,
+    when,
+    window_days: int,
+    claimed: set[int],
+) -> StockTransaction | None:
+    """The linked cash row this CSV row *is*, if there is one.
+
+    When a bank statement is imported first, its transfer rule books the money
+    into this account already — so the broker's own "wire in" line for the same
+    movement would credit it twice. Row hashes can't catch that: the row was
+    never imported here, it was created by the other side. What the two agree on
+    is the amount and roughly the date, the same match the bank importer makes
+    against an already-recorded transfer leg.
+
+    Only rows carrying ``external_account`` count: those are halves of a bank
+    transfer. An ordinary deposit someone typed in is left alone, because
+    nothing says it is this row. ``claimed`` stops two identical lines in one
+    file from both matching the same transaction.
+    """
+    if action not in ("deposit", "withdraw") or amount is None:
+        return None
+    if window_days < 0:
+        window_days = 0
+    signed = abs(amount) if action == "deposit" else -abs(amount)
+    candidates = db.execute(
+        select(StockTransaction).where(
+            StockTransaction.account_id == account.id,
+            StockTransaction.type == action,
+            StockTransaction.external_account.is_not(None),
+            StockTransaction.date >= when - timedelta(days=window_days),
+            StockTransaction.date <= when + timedelta(days=window_days),
+        )
+    ).scalars().all()
+    for txn in sorted(candidates, key=lambda t: (abs((t.date - when).days), t.id)):
+        if txn.id not in claimed and txn.amount == signed:
+            return txn
+    return None
+
+
 def held_quantities(db: Session, account: InvestmentAccount) -> dict[str, Decimal]:
     """Shares currently held per symbol, as FIFO sees them."""
     rows = db.execute(
@@ -61,6 +117,7 @@ def build_batch(
     profile_id: int,
     filename: str,
     parsed_rows: list[ParsedStockRow],
+    config: dict | None = None,
 ) -> StockImportBatch:
     """Classify parsed rows for review.
 
@@ -74,10 +131,16 @@ def build_batch(
     starts mid-history often sells a position that was bought before the import
     window, and FIFO has no lot to draw from. Those rows are marked ``no_lots``
     and left out of the import rather than failing the whole commit — the user
-    records the opening position, then re-includes the row."""
+    records the opening position, then re-includes the row.
+
+    Cash rows are checked against transfers already booked from the bank side,
+    so importing both statements of one movement doesn't credit it twice; those
+    are marked ``counterpart``."""
     batch = StockImportBatch(account_id=account.id, profile_id=profile_id, filename=filename)
     remaining_imported: dict[str, int] = {}
     held = held_quantities(db, account)
+    window_days = int((config or {}).get("transfer_match_days", DEFAULT_TRANSFER_MATCH_DAYS))
+    claimed_transfers: set[int] = set()
     # Same order commit_batch uses, so the simulation matches what FIFO will see.
     for parsed in sorted(parsed_rows, key=lambda r: (r.date, r.line_no)):
         digest = row_hash(account.id, parsed)
@@ -92,7 +155,20 @@ def build_batch(
             remaining_imported[digest] -= 1
 
         status = "duplicate" if duplicate else "ready"
-        if not duplicate and parsed.symbol and parsed.quantity:
+        if not duplicate:
+            counterpart = find_transfer_counterpart(
+                db,
+                account=account,
+                action=parsed.action,
+                amount=parsed.amount,
+                when=parsed.date,
+                window_days=window_days,
+                claimed=claimed_transfers,
+            )
+            if counterpart is not None:
+                claimed_transfers.add(counterpart.id)
+                status = "counterpart"
+        if status == "ready" and parsed.symbol and parsed.quantity:
             symbol = parsed.symbol.upper()
             if parsed.action in ("buy", "vest"):
                 held[symbol] = held.get(symbol, ZERO) + parsed.quantity

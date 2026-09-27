@@ -135,7 +135,12 @@ def preview(body: PreviewIn, db: Session = Depends(get_db)):
             },
         )
     batch = import_logic.build_batch(
-        db, account=account, profile_id=profile.id, filename=body.filename, parsed_rows=parsed_rows
+        db,
+        account=account,
+        profile_id=profile.id,
+        filename=body.filename,
+        parsed_rows=parsed_rows,
+        config=profile.config,
     )
     db.commit()
     return import_logic.batch_dict(batch)
