@@ -4,31 +4,65 @@
 <h1>Import profiles</h1>
 <p class="small dim">A profile teaches SakuraFinancial how one institution's CSV
 files are shaped. Column references use the header name (e.g. <code>Amount</code>)
-or a 0-based index for headerless files.</p>
+or a 0-based index for headerless files. Bank profiles produce register
+transactions; brokerage profiles produce trades, dividends and cash activity in
+an investment account.</p>
 
 <table class="data" cellpadding="0" cellspacing="0">
-  <tr><th>Profile</th><th>Account</th><th>Columns</th><th></th></tr>
+  <tr><th>Profile</th><th>Type</th><th>Account</th><th>Columns</th><th></th></tr>
   {% for p in profiles %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td>{{ p.name }}</td>
-    <td>{% for a in accounts %}{% if a.id == p.account_id %}{{ a.name }}{% endif %}{% endfor %}</td>
+    <td class="small">{{ kind_labels[p.kind] }}</td>
+    <td>
+      {% for a in accounts[p.kind] %}{% if a.id == p.account_id %}{{ a.name }}{% endif %}{% endfor %}
+    </td>
     <td class="small dim">
       date={{ p.config.date_column }} ({{ p.config.date_format or '%m/%d/%Y' }}),
-      desc={{ p.config.description_column }},
-      {% if p.config.amount_mode == 'debit_credit' %}debit={{ p.config.debit_column }}/credit={{ p.config.credit_column }}{% else %}amount={{ p.config.amount_column }}{% endif %}
-      {% if p.config.negate_amount %}, negated{% endif %}
+      {% if p.kind == 'stock' %}
+        action={{ p.config.action_column }},
+        symbol={{ p.config.symbol_column or '-' }},
+        qty={{ p.config.quantity_column or '-' }},
+        amount={{ p.config.amount_column or '-' }},
+        {{ (p.config.action_map or {})|length }} action mappings
+      {% else %}
+        desc={{ p.config.description_column }},
+        {% if p.config.amount_mode == 'debit_credit' %}debit={{ p.config.debit_column }}/credit={{ p.config.credit_column }}{% else %}amount={{ p.config.amount_column }}{% endif %}
+        {% if p.config.negate_amount %}, negated{% endif %}
+      {% endif %}
+      {% if p.config.skip_top_rows %}, skips {{ p.config.skip_top_rows }} line(s){% endif %}
     </td>
-    <td><a href="/import/profiles?edit={{ p.id }}">edit</a></td>
+    <td>
+      <a href="/import/profiles?edit={{ p.ref }}">edit</a>
+      <form method="post" action="/import/profiles/{{ p.kind }}/{{ p.id }}/delete" style="display: inline">
+        <input type="submit" class="btn" value="Delete">
+      </form>
+    </td>
   </tr>
   {% else %}
-  <tr class="odd"><td colspan="4" class="dim">No profiles yet.</td></tr>
+  <tr class="odd"><td colspan="5" class="dim">No profiles yet.</td></tr>
   {% endfor %}
 </table>
 
-<h2>{% if editing %}Edit profile: {{ editing.name }}{% else %}New profile{% endif %}</h2>
+<h2>
+  {% if editing %}Edit profile: {{ editing.name }}
+  {% else %}New {{ kind_labels[form_kind]|lower }} profile{% endif %}
+</h2>
+{% if not editing %}
+<p class="small">
+  Reading a
+  {% if form_kind == 'bank' %}bank or credit card statement.
+    <a href="/import/profiles?kind=stock">&raquo; switch to a brokerage profile</a>
+  {% else %}brokerage activity export.
+    <a href="/import/profiles?kind=bank">&raquo; switch to a bank profile</a>
+  {% endif %}
+</p>
+{% endif %}
+
 <div class="panel">
-  <form method="post" action="{% if editing %}/import/profiles/{{ editing.id }}{% else %}/import/profiles{% endif %}">
-    {% set cfg = editing.config if editing else {} %}
+  {% set cfg = editing.config if editing else {} %}
+  <form method="post" action="{% if editing %}/import/profiles/{{ editing.kind }}/{{ editing.id }}{% else %}/import/profiles{% endif %}">
+    <input type="hidden" name="kind" value="{{ form_kind }}">
     <table class="form">
       <tr>
         <td class="formlabel">Name:</td>
@@ -36,7 +70,7 @@ or a 0-based index for headerless files.</p>
         <td class="formlabel">Default account:</td>
         <td><select name="account_id">
           <option value="">(choose at import time)</option>
-          {% for a in accounts %}
+          {% for a in accounts[form_kind] %}
             <option value="{{ a.id }}" {% if editing and editing.account_id == a.id %}selected{% endif %}>{{ a.name }}</option>
           {% endfor %}
         </select></td>
@@ -46,7 +80,7 @@ or a 0-based index for headerless files.</p>
         <td><input type="text" name="delimiter" size="2" value="{{ cfg.get('delimiter', ',') }}"></td>
         <td class="formlabel">Header row:</td>
         <td><input type="checkbox" name="has_header" {% if cfg.get('has_header', True) %}checked{% endif %}>
-            &nbsp;skip top rows: <input type="text" name="skip_top_rows" size="2" value="{{ cfg.get('skip_top_rows', 0) }}"></td>
+            &nbsp;skip top lines: <input type="text" name="skip_top_rows" size="2" value="{{ cfg.get('skip_top_rows', 0) }}"></td>
       </tr>
       <tr>
         <td class="formlabel">Date column:</td>
@@ -55,6 +89,30 @@ or a 0-based index for headerless files.</p>
         <td><input type="text" name="date_format" size="14" value="{{ cfg.get('date_format', '%m/%d/%Y') }}">
             <span class="dim small">strptime, e.g. %m/%d/%Y</span></td>
       </tr>
+
+      {% if form_kind == 'stock' %}
+      <tr>
+        <td class="formlabel">Activity type column:</td>
+        <td><input type="text" name="action_column" size="14" value="{{ cfg.get('action_column', '') }}"></td>
+        <td class="formlabel">Description column:</td>
+        <td><input type="text" name="description_column" size="14" value="{{ cfg.get('description_column', '') }}">
+            <span class="dim small">optional</span></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Symbol column:</td>
+        <td><input type="text" name="symbol_column" size="14" value="{{ cfg.get('symbol_column', '') }}"></td>
+        <td class="formlabel">Quantity / price:</td>
+        <td><input type="text" name="quantity_column" size="10" value="{{ cfg.get('quantity_column', '') }}">
+            <input type="text" name="price_column" size="10" value="{{ cfg.get('price_column', '') }}"></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Amount column:</td>
+        <td><input type="text" name="amount_column" size="14" value="{{ cfg.get('amount_column', '') }}"></td>
+        <td class="formlabel">Commission column:</td>
+        <td><input type="text" name="fee_column" size="14" value="{{ cfg.get('fee_column', '') }}">
+            <span class="dim small">optional</span></td>
+      </tr>
+      {% else %}
       <tr>
         <td class="formlabel">Description column:</td>
         <td><input type="text" name="description_column" size="14" value="{{ cfg.get('description_column', '') }}"></td>
@@ -79,12 +137,48 @@ or a 0-based index for headerless files.</p>
       </tr>
       <tr>
         <td class="formlabel">Flip signs:</td>
-        <td><input type="checkbox" name="negate_amount" {% if cfg.get('negate_amount') %}checked{% endif %}>
+        <td colspan="3"><input type="checkbox" name="negate_amount" {% if cfg.get('negate_amount') %}checked{% endif %}>
             <span class="dim small">for banks that write charges as positive</span></td>
-        <td></td>
-        <td><input type="submit" class="btn btn-primary" value="Save profile"></td>
       </tr>
+      {% endif %}
     </table>
+
+    {% if form_kind == 'stock' %}
+    <b>Activity map</b>
+    <span class="dim small">&mdash; your broker's words &rarr;
+      {{ stock_actions|join(' / ') }}. Every activity type in the file must map
+      to something, or the import stops and tells you which one is missing.</span>
+    <table class="form">
+      {% set existing_map = (cfg.get('action_map') or {}).items()|list %}
+      {% for i in range(existing_map|length + 6) %}
+      <tr>
+        <td>Broker says <input type="text" name="map_from_{{ i }}" size="20"
+            value="{{ existing_map[i][0] if i < existing_map|length else '' }}"></td>
+        <td>means
+          <select name="map_to_{{ i }}">
+            {% set current = existing_map[i][1] if i < existing_map|length else '' %}
+            <option value=""></option>
+            {% for action in stock_actions %}
+              <option value="{{ action }}" {% if current == action %}selected{% endif %}>{{ action }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    More mappings as JSON <span class="dim small">(optional, merged with the rows above)</span>:
+    <input type="text" name="action_map_json" size="50" value="">
+    <br>
+    {% endif %}
+
+    <input type="submit" class="btn btn-primary" value="Save profile">
+    {% if editing %}<a href="/import/profiles">cancel</a>{% endif %}
   </form>
 </div>
+
+<p class="small dim"><b>Skip top lines</b> is the number of junk lines above the
+header row &mdash; account summaries, "Total:" lines and the like. Blank lines
+don't count, so type the number of lines you can actually see. Brokers that
+write <code>--</code> in a column that doesn't apply to a row are understood:
+that reads as empty, not as a ticker called "--".</p>
 {% endblock %}

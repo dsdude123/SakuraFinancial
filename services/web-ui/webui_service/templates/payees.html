@@ -55,7 +55,7 @@
       {% for a in aliases %}
       <tr class="{{ loop.cycle('odd', 'even') }}">
         <td class="small">{{ a.pattern }}</td>
-        <td>{{ a.match_type }}</td>
+        <td>{{ a.match_type|humanize }}</td>
         <td>
           <form method="post" action="/payees/{{ shown.id }}/aliases/{{ a.id }}/delete">
             <input type="submit" class="btn" value="Remove">
@@ -71,11 +71,20 @@
         Pattern <input type="text" name="pattern" size="20">
         <select name="match_type">
           <option value="exact">exact</option>
+          <option value="regex">regular expression</option>
           <option value="prefix">starts with</option>
           <option value="contains">contains</option>
         </select>
         <input type="submit" class="btn" value="Add alias">
       </form>
+      <p class="small dim">A <b>regular expression</b> is for the statements
+      where one merchant arrives with a different reference number every time:
+      <code>^EXPEDIA INC\. \d+ - DIR DEP$</code> claims all of them, and
+      <code>^FOREIGN TRANSACTION FEE( \d+)?$</code> collects the bank's own
+      charges. Case doesn't matter. The other match types are plain text.</p>
+      <p class="small dim">When two aliases could both claim a description the
+      most deliberate one wins: exact, then regex, then starts-with, then
+      contains.</p>
     </div>
   {% else %}
     <p class="dim">Select a payee to see its details and learned CSV descriptions.</p>

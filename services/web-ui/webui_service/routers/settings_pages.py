@@ -140,6 +140,7 @@ async def delete_fx(request: Request, fx_id: int):
 @router.post("/settings/transfer-rules")
 async def add_rule(
     request: Request,
+    match_days: str = Form("5"),
     pattern: str = Form(...),
     match_type: str = Form("prefix"),
     account_id: int = Form(...),
@@ -147,7 +148,12 @@ async def add_rule(
     try:
         await request.app.state.clients.ledger.post(
             "/api/transfer-rules",
-            json={"pattern": pattern, "match_type": match_type, "account_id": account_id},
+            json={
+                "pattern": pattern,
+                "match_type": match_type,
+                "account_id": account_id,
+                "match_days": int(match_days) if str(match_days).strip() else 5,
+            },
         )
     except ServiceError as exc:
         return back("/settings", err=str(exc.detail))

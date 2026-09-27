@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import RedirectResponse
 
 from ..auth import require_login
 from ..clients import ServiceError
@@ -40,11 +41,15 @@ async def stocks_home(request: Request):
 @router.post("/stocks/accounts")
 async def stocks_account_create(
     request: Request,
-    name: str = Form(...),
-    type: str = Form(...),
+    name: str = Form(""),
+    type: str = Form(""),
     opening_cash: str = Form("0"),
     note: str = Form(""),
 ):
+    if not name.strip():
+        return back("/stocks", err="Give the account a name.")
+    if not type.strip():
+        return back("/stocks", err="Choose an account type.")
     try:
         await request.app.state.clients.stocks.post(
             "/api/accounts",
@@ -70,8 +75,15 @@ async def refresh_prices(request: Request):
 
 @router.post("/stocks/prices/manual")
 async def manual_price(
-    request: Request, symbol: str = Form(...), date: str = Form(...), close: str = Form(...)
+    request: Request, symbol: str = Form(""), date: str = Form(""), close: str = Form("")
 ):
+    missing = [
+        label
+        for label, value in (("a symbol", symbol), ("a date", date), ("a price", close))
+        if not value.strip()
+    ]
+    if missing:
+        return back("/stocks", err=f"A manual price needs {', '.join(missing)}.")
     try:
         await request.app.state.clients.stocks.post(
             "/api/prices", json={"symbol": symbol, "date": date, "close": close}
@@ -109,8 +121,8 @@ async def stock_account_page(request: Request, account_id: int):
 async def stock_txn_add(
     request: Request,
     account_id: int,
-    type: str = Form(...),
-    date: str = Form(...),
+    type: str = Form(""),
+    date: str = Form(""),
     symbol: str = Form(""),
     quantity: str = Form(""),
     price: str = Form(""),
@@ -118,13 +130,17 @@ async def stock_txn_add(
     fees: str = Form(""),
     note: str = Form(""),
 ):
+    url = f"/stocks/accounts/{account_id}"
+    if not type.strip():
+        return back(url, err="Choose what kind of transaction this is.")
+    if not date.strip():
+        return back(url, err="A transaction needs a date.")
     body: dict = {"account_id": account_id, "type": type, "date": date, "note": note}
     if symbol.strip():
         body["symbol"] = symbol.strip().upper()
     for field, value in (("quantity", quantity), ("price", price), ("amount", amount), ("fees", fees)):
         if value.strip():
             body[field] = value.strip()
-    url = f"/stocks/accounts/{account_id}"
     try:
         await request.app.state.clients.stocks.post("/api/transactions", json=body)
     except ServiceError as exc:
@@ -144,6 +160,12 @@ async def grant_create(request: Request, account_id: int):
             vesting.append({"vest_date": vest_date, "shares": shares})
         index += 1
     url = f"/stocks/accounts/{account_id}"
+    if not str(form.get("symbol", "")).strip():
+        return back(url, err="A grant needs a symbol.")
+    if not str(form.get("grant_date", "")).strip():
+        return back(url, err="A grant needs a grant date.")
+    if not vesting:
+        return back(url, err="Add at least one vesting date with a share count.")
     try:
         await request.app.state.clients.stocks.post(
             "/api/rsu/grants",
@@ -185,14 +207,20 @@ async def analyze(request: Request, account_id: int):
 
 
 @router.get("/stocks/chart")
-async def stock_chart_page(request: Request, symbol: str, months: int = 12):
+async def stock_chart_page(request: Request, symbol: str = "", months: str = ""):
+    if not symbol.strip():
+        return back("/stocks", err="Pick a symbol to chart.")
+    try:
+        window = int(months) if months.strip() else 12
+    except ValueError:
+        window = 12  # a junk range in the URL is not worth an error page
     history = await request.app.state.clients.stocks.get(
-        f"/api/prices/{symbol.upper()}", params={"months": months}
+        f"/api/prices/{symbol.upper()}", params={"months": window}
     )
     return render(
         request,
         "stock_chart.html",
-        {"symbol": symbol.upper(), "months": months, "history": history},
+        {"symbol": symbol.upper(), "months": window, "history": history},
     )
 
 
@@ -203,125 +231,7 @@ async def analysis_view(request: Request, analysis_id: int):
 
 
 @router.get("/stocks/import")
-async def stock_import_page(request: Request, batch: int | None = None, edit: int | None = None):
-    clients = request.app.state.clients
-    accounts = await clients.stocks.get("/api/accounts")
-    profiles = await clients.stocks.get("/api/import/profiles")
-    batch_data = None
-    if batch is not None:
-        batch_data = await clients.stocks.get(f"/api/import/batches/{batch}")
-    editing = next((p for p in profiles if p["id"] == edit), None)
-    return render(
-        request,
-        "stock_import.html",
-        {"accounts": accounts, "profiles": profiles, "batch": batch_data, "editing": editing},
-    )
-
-
-@router.post("/stocks/import/preview")
-async def stock_import_preview(
-    request: Request,
-    profile_id: int = Form(...),
-    account_id: str = Form(""),
-    file: UploadFile = File(...),
-):
-    raw = await file.read()
-    try:
-        content = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        content = raw.decode("latin-1")
-    body = {"profile_id": profile_id, "filename": file.filename or "upload.csv", "content": content}
-    if account_id.strip():
-        body["account_id"] = int(account_id)
-    try:
-        batch = await request.app.state.clients.stocks.post("/api/import/preview", json=body)
-    except ServiceError as exc:
-        if isinstance(exc.detail, dict) and exc.detail.get("errors"):
-            return render(
-                request,
-                "import_errors.html",
-                {
-                    "message": exc.detail.get("message", ""),
-                    "errors": exc.detail["errors"],
-                    "profile_id": profile_id,
-                    "fix_url": f"/stocks/import?edit={profile_id}",
-                },
-            )
-        return back("/stocks/import", err=str(exc.detail))
-    return back(f"/stocks/import?batch={batch['id']}")
-
-
-@router.post("/stocks/import/batches/{batch_id}/commit")
-async def stock_import_commit(request: Request, batch_id: int):
-    try:
-        summary = await request.app.state.clients.stocks.post(
-            f"/api/import/batches/{batch_id}/commit"
-        )
-    except ServiceError as exc:
-        return back(f"/stocks/import?batch={batch_id}", err=str(exc.detail))
-    return back(
-        "/stocks",
-        msg=f"Imported {summary['created']} stock transaction(s) "
-        f"({', '.join(summary['symbols']) or 'cash only'})",
-    )
-
-
-@router.post("/stocks/import/batches/{batch_id}/abort")
-async def stock_import_abort(request: Request, batch_id: int):
-    try:
-        await request.app.state.clients.stocks.post(f"/api/import/batches/{batch_id}/abort")
-    except ServiceError as exc:
-        return back("/stocks/import", err=str(exc.detail))
-    return back("/stocks/import", msg="Batch discarded")
-
-
-@router.post("/stocks/import/profiles")
-async def stock_profile_save(request: Request):
-    form = await request.form()
-    import json as jsonlib
-
-    action_map: dict = {}
-    index = 0
-    while f"map_from_{index}" in form:
-        source = str(form.get(f"map_from_{index}", "")).strip()
-        target = str(form.get(f"map_to_{index}", "")).strip()
-        if source and target:
-            action_map[source] = target
-        index += 1
-    raw_map = str(form.get("action_map_json", "")).strip()
-    if raw_map:
-        try:
-            action_map.update(jsonlib.loads(raw_map))
-        except ValueError:
-            return back("/stocks/import", err="action map JSON did not parse")
-    config = {
-        "delimiter": str(form.get("delimiter") or ","),
-        "has_header": form.get("has_header") == "on",
-        "skip_top_rows": int(form.get("skip_top_rows") or 0),
-        "date_column": str(form.get("date_column") or ""),
-        "date_format": str(form.get("date_format") or "%m/%d/%Y"),
-        "action_column": str(form.get("action_column") or ""),
-        "symbol_column": str(form.get("symbol_column") or ""),
-        "quantity_column": str(form.get("quantity_column") or ""),
-        "price_column": str(form.get("price_column") or ""),
-        "fee_column": str(form.get("fee_column") or ""),
-        "amount_column": str(form.get("amount_column") or ""),
-        "description_column": str(form.get("description_column") or ""),
-        "action_map": action_map,
-    }
-    body = {
-        "name": str(form.get("name") or ""),
-        "account_id": int(form["account_id"]) if str(form.get("account_id") or "").strip() else None,
-        "config": config,
-    }
-    profile_id = str(form.get("profile_id") or "").strip()
-    try:
-        if profile_id:
-            await request.app.state.clients.stocks.put(
-                f"/api/import/profiles/{profile_id}", json=body
-            )
-        else:
-            await request.app.state.clients.stocks.post("/api/import/profiles", json=body)
-    except ServiceError as exc:
-        return back("/stocks/import", err=str(exc.detail))
-    return back("/stocks/import", msg=f"Profile '{body['name']}' saved")
+async def stock_import_page():
+    """Broker CSVs are imported from the one Import section now, alongside bank
+    statements. Kept so old bookmarks land somewhere useful."""
+    return RedirectResponse("/import", status_code=301)

@@ -21,7 +21,7 @@
         <span class="chip chip-warn">window {{ a.trading_window_open }} &rarr; {{ a.trading_window_close }}</span>
       {% endif %}
     </td>
-    <td>{{ a.type }}</td>
+    <td>{{ a.type|humanize }}</td>
     <td class="num">{{ a.cash|money }}</td>
     <td class="num">{{ a.market_value|money }}{% if not a.fully_priced %} <span class="chip chip-warn">unpriced</span>{% endif %}</td>
     <td class="num"><b>{{ a.total|money }}</b></td>
@@ -79,9 +79,11 @@
   </div>
   <h2>Statements</h2>
   <div class="panel">
-    <a href="/stocks/import"><b>&raquo; Import a broker CSV</b></a>
-    <p class="small dim">Broker transaction-type strings are translated by each
-    profile's action map; unmapped strings stop the import with instructions.</p>
+    <a href="/import"><b>&raquo; Import a broker CSV</b></a>
+    <p class="small dim">Broker CSVs go through the same Import section as bank
+    statements &mdash; pick a brokerage profile there. Transaction-type strings
+    are translated by each profile's activity map; unmapped strings stop the
+    import with instructions.</p>
   </div>
 </td>
 </tr></table>

@@ -69,6 +69,7 @@ async def monthly_page(request: Request, month: str | None = None):
     try:
         stock_accounts_raw = await clients.stocks.get("/api/accounts")
         stock_batches = await clients.stocks.get("/api/import/batches", params={"month": month})
+        stock_profiles = await clients.stocks.get("/api/import/profiles")
         stock_committed = {b["account_id"] for b in stock_batches if b["status"] == "committed"}
         stock_accounts = []
         for account in stock_accounts_raw:
@@ -78,7 +79,15 @@ async def monthly_page(request: Request, month: str | None = None):
                 status = "imported"
             else:
                 status = "pending"
-            stock_accounts.append({"account": account, "status": status})
+            stock_accounts.append(
+                {
+                    "account": account,
+                    "status": status,
+                    "profiles": [
+                        p for p in stock_profiles if p["account_id"] in (account["id"], None)
+                    ],
+                }
+            )
     except ServiceError:
         pass
 

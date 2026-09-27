@@ -21,20 +21,20 @@ mirror these table names; `app models.py` files are the source of truth.
 | accounts | name, type (`checking, savings, credit_card, cash, asset, liability`), currency, opening_balance, active. The first four types are cash-flow accounts |
 | categories | name, parent (one level: Food → Groceries), kind (`expense`/`income`) as *default direction* — splits accept both signs so reimbursements net. APIs return a `path` ("Food: Groceries") and list parents immediately followed by their children |
 | payees | name, default_category_id (auto-fill), active |
-| payee_aliases | normalized description pattern (`exact`/`prefix`/`contains`) → payee; learned during import review |
+| payee_aliases | description pattern (`exact`/`regex`/`prefix`/`contains`) → payee; learned during import review. Literal patterns are stored normalized; **regex patterns are stored verbatim** and matched case-insensitively (normalizing one would turn `\d` into `\D`). On a tie the most deliberate type wins, in that order |
 | transactions | account, date, payee, memo, status (`uncleared/cleared/reconciled`), kind (`normal/transfer/valuation`), transfer_group_id (pairs transfer legs), import_hash (dedup) |
 | transaction_splits | the money: transaction, category (NULL for transfers/valuations/uncategorized), signed amount, memo. A transaction's total = sum of its splits |
 | bills | payee, category, frequency (`weekly…annual`), expected amount, is_variable, next_due, active |
 | bill_occurrences | bill, due_date (unique per bill), expected_amount, status (`upcoming/paid/skipped/amount_review`), matched_transaction_id, actual_amount |
-| transfer_rules | description pattern → counterparty account; matching imports become transfers |
+| transfer_rules | description pattern → counterparty account; matching imports become transfers. `match_days` is how far apart the two banks may date the same transfer: when the other account's statement is imported later, a row matching an already-recorded transfer by amount inside that window is flagged `counterpart` and left out rather than booking the move twice |
 | import_profiles | name, default account, CSV config JSON (see `sakura_common.csvengine`) |
-| import_batches / import_rows | the review stage: parsed rows with status (`ready/needs_payee/duplicate/transfer`), include flag, chosen payee/category, learn_alias, resulting transaction_id |
+| import_batches / import_rows | the review stage (re-runnable: `POST /api/import/batches/{id}/reclassify` re-examines rows still `needs_payee` against aliases and transfer rules added since upload, leaving answered rows alone): parsed rows with status (`ready/needs_payee/duplicate/transfer/counterpart`), include flag, chosen payee/category, learn_alias, resulting transaction_id. `duplicate` means *this account already imported that row* — a file is never deduplicated against itself, so two identical same-day transactions both land |
 
 ## budget (`sakura_budget`)
 
 | table | notes |
 | ----- | ----- |
-| category_budgets | (month, category_id) → planned amount, set on a parent or a child. Category IDs reference the ledger by API, not FK |
+| category_budgets | (month, category_id) → planned amount, set on a parent or a child. Rows are **change points, not per-month values**: an amount holds from its month onward until a later row supersedes it, so a budget is entered once rather than every month. `amount = 0` is a stop ("no longer budgeted from here on"), and deleting a row reverts that month to whatever the previous change said. `logic.resolve_plan` does the resolution. Category IDs reference the ledger by API, not FK |
 | goals | name, target_amount, monthly_contribution, target_date, priority, active |
 
 Everything else (spent, carryovers, waterfall, General Fund) is derived from
@@ -51,7 +51,7 @@ ledger data at request time — never stored, never stale.
 | stock_transactions | type (`buy/sell/dividend/vest/deposit/withdraw/fee`), signed cash `amount`, quantity/price/fees, realized_gain (sells), import_hash |
 | prices | (security, date) → close, source (`yahoo/manual`); manual wins over yahoo. Kept forever |
 | stock_import_profiles | CSV config JSON incl. the **action_map** (broker strings → internal actions) |
-| stock_import_batches / stock_import_rows | review stage; rows are `ready` or `duplicate` |
+| stock_import_batches / stock_import_rows | review stage; rows are `ready`, `duplicate` (already imported into this account), or `no_lots` (a sale of shares the account doesn't hold — bought before the statement's window) |
 | analysis_results | stored on-demand analyses: holdings/valuation/price summaries/Yahoo fundamentals JSON + optional ai_text |
 
 ## receipts (`sakura_receipts`)

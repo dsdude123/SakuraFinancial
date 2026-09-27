@@ -41,9 +41,8 @@ async def backup_page(request: Request):
     return render(request, "backup.html", {"reachable": reachable})
 
 
-@router.get("/backup/download")
-async def backup_download(request: Request):
-    clients = request.app.state.clients
+async def build_backup_zip(clients) -> bytes:
+    """Every service's JSON export plus the original receipt files, in one zip."""
     buffer = BytesIO()
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
         for name in SERVICES:
@@ -51,14 +50,25 @@ async def backup_download(request: Request):
             archive.writestr(f"{name}.json", json.dumps(data, indent=2, sort_keys=True))
         receipt_files = await clients.receipts.get("/api/export/files.zip")
         archive.writestr("receipt-files.zip", receipt_files)
-    stamp = dt.date.today().strftime("%Y-%m-%d")
+    return buffer.getvalue()
+
+
+def backup_filename() -> str:
+    return f"sakura-backup-{dt.date.today().strftime('%Y-%m-%d')}.zip"
+
+
+def zip_response(payload: bytes, filename: str) -> Response:
     return Response(
-        buffer.getvalue(),
+        payload,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename=sakura-backup-{stamp}.zip"
-        },
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/backup/download")
+async def backup_download(request: Request):
+    payload = await build_backup_zip(request.app.state.clients)
+    return zip_response(payload, backup_filename())
 
 
 @router.post("/backup/restore")

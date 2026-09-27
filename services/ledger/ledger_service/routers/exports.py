@@ -14,13 +14,14 @@ from sqlalchemy.orm import Session, joinedload
 from sakura_common import jsonutil
 from sakura_common.money import money_str
 
-from ..db import get_db
+from ..db import Base, get_db
 from ..models import (
     Account,
     Bill,
     BillOccurrence,
     Category,
     Currency,
+    DEFAULT_CURRENCIES,
     FxRate,
     ImportProfile,
     Payee,
@@ -51,10 +52,25 @@ CORE_TABLES = [
 ]
 
 
+def tables_with_serial_id(tables: list[str]) -> list[str]:
+    """Of ``tables``, the ones that actually have an ``id`` sequence to reset.
+
+    Not every table is keyed by a serial: ``currencies`` is keyed by its ISO
+    code and has no ``id`` at all, so asking Postgres to setval its sequence
+    fails the whole request. The model metadata is the authority on which
+    tables have one, which lets callers hand over an entire deletion list
+    without curating it by hand."""
+    return [
+        table
+        for table in tables
+        if "id" in getattr(Base.metadata.tables.get(table), "columns", ())
+    ]
+
+
 def reset_sequences(db: Session, tables: list[str]) -> None:
     if db.get_bind().dialect.name != "postgresql":
         return
-    for table in tables:
+    for table in tables_with_serial_id(tables):
         db.execute(
             text(
                 f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
@@ -179,6 +195,7 @@ def export_core(db: Session) -> dict:
                 "match_type": r.match_type,
                 "account_id": r.account_id,
                 "active": r.active,
+                "match_days": r.match_days,
             }
             for r in db.execute(select(TransferRule).order_by(TransferRule.id)).scalars()
         ],
@@ -260,6 +277,7 @@ def import_core(db: Session, data: dict) -> dict:
                 match_type=r.get("match_type", "prefix"),
                 account_id=r["account_id"],
                 active=r.get("active", True),
+                match_days=r.get("match_days", 5),
             )
         )
     for p in data.get("import_profiles", []):
@@ -352,4 +370,32 @@ def export(db: Session = Depends(get_db)):
 def import_(data: dict, db: Session = Depends(get_db)):
     counts = import_core(db, data)
     db.commit()
+    # Belt and braces: import_core sets the sequences inside the load, so if
+    # that load had failed the setvals would have survived the rollback. Doing
+    # it again after the commit makes the counters match what is actually
+    # stored, whatever happened on the way here.
+    reset_sequences(db, CORE_TABLES)
+    db.commit()
     return {"imported": counts}
+
+
+@router.post("/reset")
+def reset(db: Session = Depends(get_db)):
+    """Erase every record and come back up as a fresh install.
+
+    Same table sweep as a restore, but nothing is loaded afterwards — except
+    the default currencies, without which no account can be created and the
+    "fresh install" the user expects wouldn't actually be usable."""
+    deleted = {}
+    for table in CORE_TABLES:
+        deleted[table] = db.execute(text(f"DELETE FROM {table}")).rowcount
+    for code, name, decimals in DEFAULT_CURRENCIES:
+        db.add(Currency(code=code, name=name, decimals=decimals))
+    db.commit()
+    # Sequences are rewound only once the rows are definitely gone. setval is
+    # NOT transactional: doing it first and then failing would roll the deletes
+    # back while leaving the counters at 1, and the next insert would collide
+    # with rows that still exist.
+    reset_sequences(db, CORE_TABLES)
+    db.commit()
+    return {"reset": "ledger", "deleted": deleted}

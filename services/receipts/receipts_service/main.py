@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from sakura_common import jsonutil
 from sakura_common.money import money_str
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 from sakura_common.settings_client import SettingsClient
 
 from .db import Base, get_db, get_ledger, get_settings_client, make_engine, make_session_factory
@@ -88,8 +90,10 @@ def create_app(
 ) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="receipts")
 
     app = FastAPI(title="SakuraFinancial receipts-service", version="1.0")
+    install_error_handler(app, "receipts")
     app.state.session_factory = make_session_factory(engine)
     app.state.ledger_client = ledger_client or LedgerClient()
     app.state.settings_client = settings_client or SettingsClient()
@@ -345,6 +349,33 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": "attachment; filename=receipt-files.zip"},
         )
+
+    @app.post("/api/reset")
+    def reset(db: Session = Depends(get_db)):
+        """Erase every record and come back up as a fresh install.
+
+        Unlike the other services, receipts also owns files on disk: the
+        original scans are deleted too, or a reset would leave the volume
+        full of documents nothing references."""
+        stored = [
+            row.stored_name
+            for row in db.execute(select(Document)).scalars()
+            if row.stored_name
+        ]
+        deleted = {
+            "receipt_items": db.execute(text("DELETE FROM receipt_items")).rowcount,
+            "documents": db.execute(text("DELETE FROM documents")).rowcount,
+        }
+        removed = 0
+        for name in stored:
+            path = Path(app.state.data_dir) / Path(name).name  # no path traversal
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass  # already gone, or never written — nothing to recover
+        db.commit()
+        return {"reset": "receipts", "deleted": deleted, "files_removed": removed}
 
     @app.post("/api/import")
     def import_(data: dict, db: Session = Depends(get_db)):

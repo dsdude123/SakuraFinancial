@@ -8,8 +8,13 @@ budget, receipts, and web-ui services show is derived from data held here.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from sqlalchemy import select
+
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 
 from .db import Base, make_engine, make_session_factory
 from .models import Currency, DEFAULT_CURRENCIES
@@ -25,10 +30,13 @@ from .routers import (
     transactions,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="ledger")
     session_factory = make_session_factory(engine)
 
     with session_factory() as db:
@@ -38,6 +46,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             db.commit()
 
     app = FastAPI(title="SakuraFinancial ledger-service", version="1.0")
+    install_error_handler(app, "ledger")
     app.state.session_factory = session_factory
 
     @app.get("/health")

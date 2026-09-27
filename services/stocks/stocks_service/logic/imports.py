@@ -5,8 +5,10 @@ per-profile action map (broker strings -> internal actions). Parsing failures
 from __future__ import annotations
 
 import hashlib
+from decimal import Decimal
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from sakura_common.csvengine import ParsedStockRow
@@ -14,11 +16,15 @@ from sakura_common.money import money_str, qty_str
 
 from ..models import (
     InvestmentAccount,
+    Lot,
+    Security,
     StockImportBatch,
     StockImportRow,
     StockTransaction,
 )
 from . import portfolio
+
+ZERO = Decimal("0")
 
 
 def row_hash(account_id: int, parsed: ParsedStockRow) -> str:
@@ -37,6 +43,17 @@ def row_hash(account_id: int, parsed: ParsedStockRow) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def held_quantities(db: Session, account: InvestmentAccount) -> dict[str, Decimal]:
+    """Shares currently held per symbol, as FIFO sees them."""
+    rows = db.execute(
+        select(Security.symbol, func.sum(Lot.quantity))
+        .join(Security, Security.id == Lot.security_id)
+        .where(Lot.account_id == account.id)
+        .group_by(Security.symbol)
+    ).all()
+    return {symbol.upper(): Decimal(str(quantity or 0)) for symbol, quantity in rows}
+
+
 def build_batch(
     db: Session,
     *,
@@ -45,20 +62,46 @@ def build_batch(
     filename: str,
     parsed_rows: list[ParsedStockRow],
 ) -> StockImportBatch:
+    """Classify parsed rows for review.
+
+    Duplicate detection compares the file against what is **already in the
+    account**, never the file against itself: buying the same lot twice in one
+    day is ordinary, and those rows must both import. A hash seen N times in the
+    account marks the first N matching rows in this file as already-imported;
+    anything beyond that is new activity.
+
+    Rows are also checked against the account's holdings: a broker export that
+    starts mid-history often sells a position that was bought before the import
+    window, and FIFO has no lot to draw from. Those rows are marked ``no_lots``
+    and left out of the import rather than failing the whole commit — the user
+    records the opening position, then re-includes the row."""
     batch = StockImportBatch(account_id=account.id, profile_id=profile_id, filename=filename)
-    seen: set[str] = set()
-    for parsed in parsed_rows:
+    remaining_imported: dict[str, int] = {}
+    held = held_quantities(db, account)
+    # Same order commit_batch uses, so the simulation matches what FIFO will see.
+    for parsed in sorted(parsed_rows, key=lambda r: (r.date, r.line_no)):
         digest = row_hash(account.id, parsed)
-        duplicate = (
-            digest in seen
-            or db.execute(
-                select(StockTransaction.id)
+        if digest not in remaining_imported:
+            remaining_imported[digest] = db.execute(
+                select(func.count())
+                .select_from(StockTransaction)
                 .where(StockTransaction.import_hash == digest)
-                .limit(1)
-            ).scalar_one_or_none()
-            is not None
-        )
-        seen.add(digest)
+            ).scalar_one()
+        duplicate = remaining_imported[digest] > 0
+        if duplicate:
+            remaining_imported[digest] -= 1
+
+        status = "duplicate" if duplicate else "ready"
+        if not duplicate and parsed.symbol and parsed.quantity:
+            symbol = parsed.symbol.upper()
+            if parsed.action in ("buy", "vest"):
+                held[symbol] = held.get(symbol, ZERO) + parsed.quantity
+            elif parsed.action == "sell":
+                if parsed.quantity > held.get(symbol, ZERO):
+                    status = "no_lots"
+                else:
+                    held[symbol] -= parsed.quantity
+
         batch.rows.append(
             StockImportRow(
                 line_no=parsed.line_no,
@@ -71,12 +114,30 @@ def build_batch(
                 amount=parsed.amount,
                 description=parsed.description,
                 row_hash=digest,
-                status="duplicate" if duplicate else "ready",
-                include=not duplicate,
+                status=status,
+                include=status == "ready",
             )
         )
+    batch.rows.sort(key=lambda r: r.line_no)
     db.add(batch)
     return batch
+
+
+def normalize_amount(action: str, amount):
+    """Put a broker's amount into the sign convention apply_transaction wants.
+
+    Sign conventions vary by broker and even by column within one export — some
+    write a purchase as a positive cost, others as a negative cash movement. The
+    action already says which way money went, so the magnitude is what matters:
+    buys are negative (cash out), everything else is a positive magnitude that
+    apply_transaction signs itself."""
+    if amount is None:
+        return None
+    if action == "buy":
+        return -abs(amount)
+    if action in ("sell", "dividend", "deposit", "withdraw", "fee"):
+        return abs(amount)
+    return amount
 
 
 def commit_batch(db: Session, batch: StockImportBatch) -> dict:
@@ -88,24 +149,30 @@ def commit_batch(db: Session, batch: StockImportBatch) -> dict:
         if not row.include or row.transaction_id is not None:
             skipped += 1
             continue
-        amount = row.amount
-        if amount is not None and row.action in ("withdraw", "fee") and amount < 0:
-            amount = -amount  # brokers export these negative; API wants magnitude
-        if amount is not None and row.action == "buy" and amount > 0:
-            amount = -amount  # buy amounts arrive as positive cost in some exports
-        txn = portfolio.apply_transaction(
-            db,
-            account=account,
-            type=row.action,
-            date=row.date,
-            symbol=row.symbol,
-            quantity=row.quantity,
-            price=row.price,
-            amount=amount if amount is not None else None,
-            fees=row.fee or 0,
-            note=row.description,
-            import_hash=row.row_hash,
-        )
+        amount = normalize_amount(row.action, row.amount)
+        try:
+            txn = portfolio.apply_transaction(
+                db,
+                account=account,
+                type=row.action,
+                date=row.date,
+                symbol=row.symbol,
+                quantity=row.quantity,
+                price=row.price,
+                amount=amount,
+                fees=abs(row.fee) if row.fee else 0,
+                note=row.description,
+                import_hash=row.row_hash,
+            )
+        except HTTPException as exc:
+            # Point at the CSV line, not just the rule that tripped — the user
+            # is looking at a file, not at our transaction model.
+            raise HTTPException(
+                exc.status_code,
+                f"line {row.line_no} ({row.action} {row.symbol or 'cash'} "
+                f"on {row.date.isoformat()}): {exc.detail} - uncheck that row or "
+                f"fix the file, then import again; nothing was imported",
+            ) from exc
         row.transaction_id = txn.id
         created += 1
         if row.symbol:

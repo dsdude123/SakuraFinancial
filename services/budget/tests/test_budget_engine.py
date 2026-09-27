@@ -156,28 +156,127 @@ class TestWaterfall:
         assert goal["progress_pct"] == 16
 
 
-class TestBudgetsCrud:
-    def test_zero_amount_deletes(self, client, ledger):
-        client.put("/api/budget/2026-08/categories/2", json={"amount": "400.00"})
-        client.put("/api/budget/2026-08/categories/2", json={"amount": "0"})
-        view = client.get("/api/budget/2026-08").json()
-        assert all(r["category_id"] != 2 for r in view["categories"])
+def budgeted(client, month: str, category_id: int):
+    """The amount a category shows on the budget page for a month, or None if
+    it isn't on the budget at all."""
+    view = client.get(f"/api/budget/{month}").json()
+    row = next((r for r in view["categories"] if r["category_id"] == category_id), None)
+    return row["budgeted"] if row else None
 
+
+class TestBudgetsCrud:
     def test_negative_rejected(self, client):
         response = client.put("/api/budget/2026-08/categories/2", json={"amount": "-5"})
         assert response.status_code == 422
 
-    def test_copy_from_previous(self, client, ledger):
-        client.put("/api/budget/2026-07/categories/1", json={"amount": "2000.00"})
-        client.put("/api/budget/2026-07/categories/2", json={"amount": "400.00"})
-        result = client.post("/api/budget/2026-08/copy-from-previous").json()
-        assert result["copied"] == 2
-        view = client.get("/api/budget/2026-08").json()
-        rent = next(r for r in view["categories"] if r["category_id"] == 1)
-        assert rent["budgeted"] == "2000.00"
 
-    def test_copy_with_nothing_to_copy_404(self, client):
-        assert client.post("/api/budget/2026-08/copy-from-previous").status_code == 404
+class TestBudgetCarriesForward:
+    """A budget is a standing decision, not a monthly chore: what you set in
+    one month applies to every later month until you change it."""
+
+    def test_a_budget_applies_to_every_later_month(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        for month in ("2026-03", "2026-04", "2026-09", "2027-01"):
+            assert budgeted(client, month, 1) == "2000.00"
+
+    def test_it_does_not_apply_to_earlier_months(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        assert budgeted(client, "2026-02", 1) is None
+
+    def test_a_later_change_supersedes_from_that_month_on(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.put("/api/budget/2026-06/categories/1", json={"amount": "2200.00"})
+        assert budgeted(client, "2026-05", 1) == "2000.00"
+        assert budgeted(client, "2026-06", 1) == "2200.00"
+        assert budgeted(client, "2026-12", 1) == "2200.00"
+
+    def test_the_view_says_where_the_amount_came_from(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        view = client.get("/api/budget/2026-07").json()
+        row = next(r for r in view["categories"] if r["category_id"] == 1)
+        assert row["budget_since"] == "2026-03"
+        assert row["budget_inherited"] is True
+        assert row["budget_changed_here"] is False
+
+        march = client.get("/api/budget/2026-03").json()
+        row = next(r for r in march["categories"] if r["category_id"] == 1)
+        assert row["budget_inherited"] is False
+        assert row["budget_changed_here"] is True
+
+    def test_carried_budgets_drive_the_engine_not_just_the_display(self, client, ledger):
+        """The whole point: months you never visited still have envelopes, so
+        overspending in them carries a deficit forward."""
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "100.00"})
+        ledger.set_month("2026-04", income="500.00", spend={1: "150.00"})
+        april = client.get("/api/budget/2026-04").json()
+        rent = next(r for r in april["categories"] if r["category_id"] == 1)
+        assert rent["budgeted"] == "100.00"
+        assert rent["available"] == "-50.00"
+        assert rent["over"] is True
+
+        may = client.get("/api/budget/2026-05").json()
+        rent = next(r for r in may["categories"] if r["category_id"] == 1)
+        assert rent["carry_in"] == "-50.00"
+
+
+class TestRemovingACategory:
+    def test_budgeting_zero_removes_it_from_that_month_on(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.put("/api/budget/2026-06/categories/1", json={"amount": "0"})
+        assert budgeted(client, "2026-05", 1) == "2000.00"   # history untouched
+        assert budgeted(client, "2026-06", 1) is None
+        assert budgeted(client, "2027-01", 1) is None
+
+    def test_a_removed_category_can_be_brought_back_later(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.put("/api/budget/2026-06/categories/1", json={"amount": "0"})
+        client.put("/api/budget/2026-09/categories/1", json={"amount": "2500.00"})
+        assert budgeted(client, "2026-08", 1) is None
+        assert budgeted(client, "2026-09", 1) == "2500.00"
+
+    def test_removing_something_never_budgeted_is_harmless(self, client, ledger):
+        response = client.put("/api/budget/2026-08/categories/2", json={"amount": "0"})
+        assert response.status_code == 200
+        assert response.json()["budgeted"] is False
+        assert budgeted(client, "2026-08", 2) is None
+
+    def test_undoing_a_change_reverts_to_the_inherited_amount(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.put("/api/budget/2026-06/categories/1", json={"amount": "2200.00"})
+        client.delete("/api/budget/2026-06/categories/1")
+        assert budgeted(client, "2026-06", 1) == "2000.00"
+        assert budgeted(client, "2026-12", 1) == "2000.00"
+
+    def test_undoing_a_removal_brings_the_category_back(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.put("/api/budget/2026-06/categories/1", json={"amount": "0"})
+        assert budgeted(client, "2026-06", 1) is None
+        client.delete("/api/budget/2026-06/categories/1")
+        assert budgeted(client, "2026-06", 1) == "2000.00"
+
+    def test_undoing_the_original_change_removes_it_everywhere(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        client.delete("/api/budget/2026-03/categories/1")
+        assert budgeted(client, "2026-03", 1) is None
+        assert budgeted(client, "2026-12", 1) is None
+
+    def test_undoing_where_nothing_changed_is_a_404(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        response = client.delete("/api/budget/2026-07/categories/1")
+        assert response.status_code == 404
+        assert "inheriting" in response.json()["detail"]
+
+    def test_single_category_lookup_reports_provenance(self, client, ledger):
+        client.put("/api/budget/2026-03/categories/1", json={"amount": "2000.00"})
+        entry = client.get("/api/budget/2026-07/categories/1").json()
+        assert entry == {
+            "month": "2026-07",
+            "category_id": 1,
+            "amount": "2000.00",
+            "budgeted": True,
+            "since": "2026-03",
+            "changed_here": False,
+        }
 
 
 class TestGoalsCrud:

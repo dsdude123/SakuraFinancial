@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block subtitle %}search{% endblock %}
+{% block content %}
+<h1>Search transactions</h1>
+
+<div class="panel">
+  <form method="get" action="/search">
+    <table class="form">
+      <tr>
+        <td class="formlabel">Text:</td>
+        <td><input type="text" name="q" size="24" value="{{ filters.q }}">
+            <span class="dim small">payee or memo</span></td>
+        <td class="formlabel">Account:</td>
+        <td><select name="account_id">
+          <option value="">(any)</option>
+          {% for a in accounts %}
+            <option value="{{ a.id }}" {% if filters.account_id == a.id|string %}selected{% endif %}>{{ a.name }}</option>
+          {% endfor %}
+        </select></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Category:</td>
+        <td><select name="category_id">
+          <option value="">(any)</option>
+          {% for c in categories %}
+            <option value="{{ c.id }}" {% if filters.category_id == c.id|string %}selected{% endif %}>{{ c.path }}</option>
+          {% endfor %}
+        </select></td>
+        <td class="formlabel">Payee:</td>
+        <td><select name="payee_id">
+          <option value="">(any)</option>
+          {% for p in payees %}
+            <option value="{{ p.id }}" {% if filters.payee_id == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select></td>
+      </tr>
+      <tr>
+        <td class="formlabel">Dates:</td>
+        <td><input type="text" name="start" size="10" value="{{ filters.start }}">
+            to <input type="text" name="end" size="10" value="{{ filters.end }}">
+            <span class="dim small">YYYY-MM-DD</span></td>
+        <td class="formlabel">Only:</td>
+        <td><input type="checkbox" name="uncategorized" {% if filters.uncategorized == 'on' %}checked{% endif %}>
+            uncategorized</td>
+      </tr>
+      <tr><td></td><td colspan="3"><input type="submit" class="btn btn-primary" value="Search"></td></tr>
+    </table>
+  </form>
+</div>
+
+{% if searched %}
+<h2>{{ results|length }} match{% if results|length != 1 %}es{% endif %}{% if more %} (first {{ page_size }}){% endif %}</h2>
+
+{% if results %}
+<form method="post" action="/search/bulk">
+  {# Carry the filters so the page comes back to the same results. #}
+  <input type="hidden" name="q" value="{{ filters.q }}">
+  <input type="hidden" name="account_id" value="{{ filters.account_id }}">
+  <input type="hidden" name="category_id" value="{{ filters.category_id }}">
+  <input type="hidden" name="payee_id" value="{{ filters.payee_id }}">
+  <input type="hidden" name="start" value="{{ filters.start }}">
+  <input type="hidden" name="end" value="{{ filters.end }}">
+  <input type="hidden" name="uncategorized" value="{{ filters.uncategorized }}">
+
+  <div class="panel">
+    <b>Change the ticked rows:</b>
+    {# Prefixed so they can never collide with the hidden filter fields above,
+       which carry the same concepts under their own names. #}
+    category
+    <select name="apply_category_id">
+      <option value="">(leave alone)</option>
+      {% for c in categories %}<option value="{{ c.id }}">{{ c.path }}</option>{% endfor %}
+    </select>
+    payee
+    <select name="apply_payee_id">
+      <option value="">(leave alone)</option>
+      {% for p in payees %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+    </select>
+    status
+    <select name="apply_status">
+      <option value="">(leave alone)</option>
+      <option value="uncleared">Uncleared</option>
+      <option value="cleared">Cleared</option>
+      <option value="reconciled">Reconciled</option>
+    </select>
+    <input type="submit" class="btn btn-primary" value="Apply to ticked">
+  </div>
+
+  <table class="data" cellpadding="0" cellspacing="0">
+    <tr><th>Pick</th><th>Date</th><th>Account</th><th>Payee</th><th>Category</th>
+        <th>Memo</th><th class="num">Amount</th><th></th></tr>
+    {% for t in results %}
+    <tr class="{{ loop.cycle('odd', 'even') }}">
+      <td><input type="checkbox" name="txn" value="{{ t.id }}"></td>
+      <td>{{ t.date }}</td>
+      <td class="small">{{ t.account_name }}</td>
+      <td>{{ t.payee_name or '' }}</td>
+      <td class="small">
+        {% if t.splits|length > 1 %}
+          <span class="chip">{{ t.splits|length }} splits</span>
+        {% else %}
+          {{ t.splits[0].category_name if t.splits and t.splits[0].category_name else '' }}
+        {% endif %}
+      </td>
+      <td class="small dim">{{ t.memo }}</td>
+      <td class="num {% if t.total is negative %}neg{% endif %}">{{ t.total|money }}</td>
+      <td class="small"><a href="/transactions/{{ t.id }}/edit">open</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</form>
+
+<p class="small dim">Ticked rows are changed in one go. A <b>split</b>
+transaction is left alone when setting a category &mdash; collapsing several
+categories into one would throw away how the money was actually divided, so
+open those individually. Transfers and value changes have no payee or category
+by design and are skipped too; the confirmation says how many were left and
+why.</p>
+
+{% if more or offset %}
+<p>
+  {% if offset %}
+  <a href="/search?q={{ filters.q }}&amp;account_id={{ filters.account_id }}&amp;category_id={{ filters.category_id }}&amp;payee_id={{ filters.payee_id }}&amp;start={{ filters.start }}&amp;end={{ filters.end }}&amp;uncategorized={{ filters.uncategorized }}&amp;offset={{ offset - page_size if offset > page_size else 0 }}">&laquo; previous</a>
+  {% endif %}
+  {% if more %}
+  <a href="/search?q={{ filters.q }}&amp;account_id={{ filters.account_id }}&amp;category_id={{ filters.category_id }}&amp;payee_id={{ filters.payee_id }}&amp;start={{ filters.start }}&amp;end={{ filters.end }}&amp;uncategorized={{ filters.uncategorized }}&amp;offset={{ offset + page_size }}">next &raquo;</a>
+  {% endif %}
+</p>
+{% endif %}
+
+{% else %}
+<p class="dim">Nothing matched those filters.</p>
+{% endif %}
+{% else %}
+<p class="small dim">Pick some filters and search. Everything is optional
+&mdash; leaving them all blank and ticking <b>uncategorized</b> is the quickest
+way to find rows that still need filing after an import.</p>
+{% endif %}
+{% endblock %}

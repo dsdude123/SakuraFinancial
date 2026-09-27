@@ -25,6 +25,11 @@ def savings(client):
 
 
 @pytest.fixture()
+def ledger_third_account(client):
+    return client.post("/api/accounts", json={"name": "Brokerage Cash", "type": "cash"}).json()
+
+
+@pytest.fixture()
 def rent_category(client):
     return client.post("/api/categories", json={"name": "Rent", "kind": "expense"}).json()
 

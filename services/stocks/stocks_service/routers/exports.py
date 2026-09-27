@@ -245,3 +245,22 @@ def import_(data: dict, db: Session = Depends(get_db)):
             "prices": len(data["prices"]),
         }
     }
+
+
+@router.post("/reset")
+def reset(db: Session = Depends(get_db)):
+    """Erase every record and come back up as a fresh install. Same table
+    sweep as a restore, with nothing loaded afterwards."""
+    deleted = {}
+    for table in TABLES_DELETE_ORDER:
+        deleted[table] = db.execute(text(f"DELETE FROM {table}")).rowcount
+    if db.get_bind().dialect.name == "postgresql":
+        for table in TABLES_DELETE_ORDER:
+            db.execute(
+                text(
+                    f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                    f"COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)"
+                )
+            )
+    db.commit()
+    return {"reset": "stocks", "deleted": deleted}

@@ -59,6 +59,56 @@ in unless the backup's settings export carries the old hash, which it does.
 From a Postgres dump instead:
 `cat sakura-YYYY-MM-DD.sql | docker compose exec -T db psql -U postgres`.
 
+## Starting over (factory reset)
+
+Web UI → *Settings* → *Reset everything*. This erases every record in every
+service — accounts, transactions, bills, budgets, goals, investments,
+receipts and their scanned files, and saved settings including API keys — and
+leaves the stack running like a fresh install.
+
+The flow will not let you reach the wipe without a backup in hand:
+
+1. It builds the same zip as *Backup & Restore* and parks it on the web-ui
+   volume. If any service is unreachable the backup would be incomplete, so
+   the reset refuses to start.
+2. You download it. The wipe stays locked until the zip has actually been
+   sent to the browser — a backup you never received is not a backup.
+3. You type `ERASE` and tick the box.
+
+Two things deliberately survive: your **login password** (a reset clears your
+data, it shouldn't lock you out of the machine) and the ledger's **default
+currencies** (without them no account can be created and the "fresh install"
+wouldn't be usable). The parked copy is deleted once the wipe finishes, or if
+you cancel; abandoned ones are swept after six hours. Everything is
+recoverable from the zip you just downloaded via *Backup & Restore*.
+
+Each service also exposes `POST /api/reset` directly if you'd rather wipe one
+of them — it takes no backup and asks no questions, so use the UI unless you
+know exactly why you're not.
+
+## Schema upgrades and self-repair
+
+Every service runs `sakura_common.schema.sync_schema` at boot. It does two
+things, both additive and both safe to repeat:
+
+1. **`add_missing_columns`** issues `ALTER TABLE ... ADD COLUMN` for anything
+   the models declare and the database lacks. `create_all` makes missing
+   tables but never alters an existing one, so without this a newly shipped
+   column leaves an upgraded install throwing `UndefinedColumn` on the first
+   query. It only adds — never drops, renames or retypes.
+2. **`resync_sequences`** drags any `id` sequence that has fallen behind its
+   table back past `MAX(id)`. Postgres sequences are **not transactional**: a
+   `setval` survives a rollback, so a restore or reset that rewinds the
+   counters and then fails leaves the rows in place with their sequences at 1,
+   and the next insert dies on a duplicate primary key. Sequences are only
+   ever moved forward; one that is already ahead is left alone.
+
+If the logs show `id sequences were behind their tables and have been
+repaired`, that is this working — a restore or reset was interrupted at some
+point, and the damage has been undone.
+
+Anything beyond these (a real migration) is a restore-from-export job.
+
 ## Security posture
 
 - Only web-ui is published (`:8000`), protected by a single-user password
@@ -84,6 +134,12 @@ From a Postgres dump instead:
 
 ## Troubleshooting
 
+- **Something went wrong on a page:** the error page carries an error id and,
+  when the failure was a genuine crash rather than a deliberate rejection, a
+  **Show the technical details** button with the full stack trace. *Error log*
+  in the nav lists the recent ones. That is the same trace the service logged,
+  so you rarely need `docker compose logs` for an application error. The log is
+  in memory only and clears when web-ui restarts.
 - **A service is unhealthy:** `docker compose logs <service>`. All services
   log to stdout.
 - **Web UI says a service is unreachable:** it renders which one; check that
@@ -91,6 +147,11 @@ From a Postgres dump instead:
 - **Stock prices stopped updating:** Yahoo occasionally changes/rate-limits
   endpoints. Check `docker compose logs stocks`; prices can always be entered
   manually meanwhile.
+- **An import is full of unrecognised payees:** add a payee alias (a regular
+  expression handles the ones with a changing reference number), then press
+  *Re-scan against current rules* on the review page — no need to discard the
+  batch and upload the file again. Anything still unanswered at commit is filed
+  under its bank description unless you untick that box.
 - **Import rejected my CSV:** that is by design — the error page lists each
   bad row and why. Fix the import profile (or the file) and re-upload;
   nothing was written.

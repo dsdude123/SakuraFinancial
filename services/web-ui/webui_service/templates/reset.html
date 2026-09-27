@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block subtitle %}reset everything{% endblock %}
+{% block content %}
+<h1>Reset SakuraFinancial</h1>
+
+<div class="warnpanel">
+  <p><b>(!) This erases every record in every service</b> &mdash; accounts,
+  transactions, bills, budgets and goals, investment accounts and holdings,
+  receipts and their scanned files, and your saved settings and API keys.
+  It cannot be undone from inside the app.</p>
+  <p class="small">Your login password is kept, so you stay signed in.
+  The database itself is not dropped &mdash; the app comes back up like a
+  fresh install, ready to use.</p>
+</div>
+
+{% if not pending %}
+<h2>Step 1 of 3 &mdash; take a safety backup</h2>
+<div class="panel">
+  <p>A reset can't start without one. This builds the same zip as the
+  <a href="/backup">Backup &amp; Restore</a> page: every service's data as
+  human-readable JSON plus your original receipt files. Nothing is erased by
+  this step.</p>
+  <form method="post" action="/reset/backup">
+    <input type="submit" class="btn btn-primary" value="Create the safety backup">
+  </form>
+  <p class="small dim">All services must be reachable. If one is down the
+  backup would be incomplete, so the reset refuses to begin.</p>
+</div>
+<p><a href="/settings">&laquo; Back to Settings</a></p>
+
+{% else %}
+<h2>Step 2 of 3 &mdash; save the backup</h2>
+<div class="panel">
+  <p>Backup ready: <b>{{ pending.filename }}</b>
+     ({{ pending_size }}, taken {{ pending.created_at.replace('T', ' ') }}).</p>
+  <p><a href="/reset/download?token={{ pending.token }}"><b>&raquo; Download the backup zip</b></a></p>
+  {% if pending.downloaded_at %}
+    <p><span class="chip chip-ok">downloaded {{ pending.downloaded_at.replace('T', ' ') }}</span>
+    Put it somewhere off this machine before continuing.</p>
+  {% else %}
+    <p><span class="chip chip-warn">not downloaded yet</span>
+    The reset stays locked until you download it.
+    <a href="/reset?token={{ pending.token }}">Saved it? Refresh this page.</a></p>
+  {% endif %}
+</div>
+
+<h2>Step 3 of 3 &mdash; erase everything</h2>
+<div class="warnpanel">
+  <form method="post" action="/reset/confirm">
+    <input type="hidden" name="token" value="{{ pending.token }}">
+    <p>Type <b>{{ confirm_word }}</b> to confirm:
+      <input type="text" name="confirm" size="10"></p>
+    <p><input type="checkbox" name="understood" id="understood">
+      <label for="understood">I have saved the backup and I understand every
+      record will be erased.</label></p>
+    <input type="submit" class="btn btn-primary" value="Erase everything now">
+  </form>
+</div>
+
+<div class="panel">
+  <form method="post" action="/reset/cancel">
+    <input type="hidden" name="token" value="{{ pending.token }}">
+    <input type="submit" class="btn" value="Cancel and discard this backup">
+  </form>
+  <p class="small dim">Cancelling deletes the parked copy of the backup from
+  the server. The zip you downloaded is yours to keep either way, and can be
+  restored from <a href="/backup">Backup &amp; Restore</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

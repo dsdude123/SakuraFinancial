@@ -14,6 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from sakura_common.llm import LLMClient, LLMConfig, LLMError, config_from_settings
+from sakura_common.errors import install_error_handler
+from sakura_common.schema import sync_schema
 from sakura_common.settings_client import MASK
 
 from .db import Base, make_engine, make_session_factory
@@ -47,9 +49,11 @@ def serialize(setting: Setting, reveal: bool = False) -> dict:
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
+    sync_schema(engine, Base, service="settings")
     session_factory = make_session_factory(engine)
 
     app = FastAPI(title="SakuraFinancial settings-service", version="1.0")
+    install_error_handler(app, "settings")
 
     def get_db():
         db = session_factory()
@@ -138,6 +142,22 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 {"key": row.key, "value": row.value, "is_secret": row.is_secret} for row in rows
             ],
         }
+
+    @app.post("/api/reset")
+    def reset(data: dict | None = None, db: Session = Depends(get_db)):
+        """Erase stored configuration and come back up as a fresh install.
+
+        ``keep`` lists keys to spare. The web UI passes its password hash: a
+        factory reset should clear API keys and provider config, but locking
+        the user out of the machine they just reset is not "erasing data",
+        it's a support call."""
+        keep = [str(key) for key in (data or {}).get("keep", [])]
+        query = db.query(Setting)
+        if keep:
+            query = query.filter(Setting.key.notin_(keep))
+        deleted = query.delete(synchronize_session=False)
+        db.commit()
+        return {"reset": "settings", "deleted": {"settings": deleted}, "kept": keep}
 
     @app.post("/api/import")
     def import_(data: dict, db: Session = Depends(get_db)):

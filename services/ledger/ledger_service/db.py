@@ -33,3 +33,10 @@ def get_db(request: Request):
         yield db
     finally:
         db.close()
+
+
+def add_missing_columns(engine, base=Base):
+    """Kept as the ledger's entry point; the implementation is shared."""
+    from sakura_common.schema import add_missing_columns as _add
+
+    return _add(engine, base)

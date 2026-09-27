@@ -20,13 +20,16 @@ across the tracked months. Future months need to come in under budget to recover
   <h2>Envelopes</h2>
   <table class="data" cellpadding="0" cellspacing="0">
     <tr><th>Category</th><th class="num">Budgeted</th><th class="num">Carry-in</th>
-        <th class="num">Spent</th><th class="num">Available</th><th>Set</th></tr>
+        <th class="num">Spent</th><th class="num">Available</th><th>Budget from {{ month }} on</th></tr>
     {% for row in view.categories %}
     <tr class="{{ loop.cycle('odd', 'even') }}">
       <td>
         {% if row.depth %}&nbsp;&nbsp;&nbsp;&#187; {% endif %}{{ row.name }}
         {% if row.is_subtotal %}<span class="chip">subtotal</span>{% endif %}
         {% if row.over %}<span class="chip chip-bad">over</span>{% endif %}
+        {% if row.budget_inherited %}
+          <br><span class="small dim">carried forward from {{ row.budget_since }}</span>
+        {% endif %}
       </td>
       <td class="num {% if row.is_subtotal %}dim{% endif %}">{{ row.budgeted|money }}</td>
       <td class="num {% if row.carry_in is negative %}neg{% endif %}">{{ row.carry_in|money }}</td>
@@ -38,14 +41,29 @@ across the tracked months. Future months need to come in under budget to recover
         {% if row.category_id %}
         <form method="post" action="/budget/{{ month }}/set">
           <input type="hidden" name="category_id" value="{{ row.category_id }}">
+          {# A subtotal has no envelope of its own; the blank box offers to give
+             it one, which turns the children into detail rows. #}
           <input type="text" name="amount" size="8" value="{{ row.budgeted if not row.is_subtotal else '' }}">
           <input type="submit" class="btn" value="Save">
         </form>
+        {% if row.budget_since and not row.is_subtotal %}
+        <form method="post" action="/budget/{{ month }}/remove">
+          <input type="hidden" name="category_id" value="{{ row.category_id }}">
+          <input type="submit" class="btn" value="Remove">
+        </form>
+        {% endif %}
+        {% if row.budget_changed_here and not row.is_subtotal %}
+        <form method="post" action="/budget/{{ month }}/revert">
+          <input type="hidden" name="category_id" value="{{ row.category_id }}">
+          <input type="submit" class="btn" value="Undo this month's change">
+        </form>
+        {% endif %}
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr class="odd"><td colspan="6" class="dim">No budgets for this month yet. Add one below or copy last month's.</td></tr>
+    <tr class="odd"><td colspan="6" class="dim">Nothing budgeted yet. Add a category below &mdash;
+      what you set carries into every later month automatically.</td></tr>
     {% endfor %}
     <tr class="totalrow">
       <td>Total</td>
@@ -57,7 +75,7 @@ across the tracked months. Future months need to come in under budget to recover
   </table>
 
   <div class="panel">
-    <b>Add a category to this month's budget</b>
+    <b>Add a category to the budget</b>
     <form method="post" action="/budget/{{ month }}/set">
       <select name="category_id">
         {% for c in addable %}<option value="{{ c.id }}">{{ c.path }}</option>{% endfor %}
@@ -65,10 +83,16 @@ across the tracked months. Future months need to come in under budget to recover
       Amount <input type="text" name="amount" size="8">
       <input type="submit" class="btn" value="Add">
     </form>
-    <form method="post" action="/budget/{{ month }}/copy-previous" style="margin-top: 4px">
-      <input type="submit" class="btn" value="Copy last month's budgets">
-    </form>
+    <p class="small dim">Added from {{ month }} onward.</p>
   </div>
+  <p class="small dim"><b>A budget is a standing decision, not a monthly chore.</b>
+  What you set here applies to {{ month }} <i>and every month after it</i>, until
+  you change it. Change an amount in a later month and only that month onward
+  moves; earlier months keep what they had.</p>
+  <p class="small dim"><b>Remove</b> takes a category off the budget from this
+  month on, leaving history alone. <b>Undo this month's change</b> appears where
+  you've changed an amount here, and puts the row back to the figure it was
+  inheriting.</p>
   <p class="small dim">Deficits (red) carry into next month until you spend under
   budget. Leftovers don't pad next month's category — they land in the General Fund.</p>
   <p class="small dim">Subcategories: budget the parent (<b>Food</b>) and its

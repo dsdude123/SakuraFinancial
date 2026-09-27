@@ -66,3 +66,20 @@ def test_import_replaces_everything(client):
 def test_import_rejects_bad_shape(client):
     assert client.post("/api/import", json={"nope": []}).status_code == 422
     assert client.post("/api/import", json={"settings": [{"value": "no key"}]}).status_code == 422
+
+
+class TestReset:
+    def test_reset_clears_everything_by_default(self, client):
+        client.put("/api/settings/llm.api_key", json={"value": "sk-x", "is_secret": True})
+        client.put("/api/settings/llm.model", json={"value": "gpt-4"})
+        assert client.post("/api/reset", json={}).json()["deleted"]["settings"] == 2
+        assert client.get("/api/settings").json() == []
+
+    def test_kept_keys_survive(self, client):
+        """The web UI passes its password hash so a factory reset doesn't lock
+        the user out of the machine they just reset."""
+        client.put("/api/settings/ui.password_hash", json={"value": "hash", "is_secret": True})
+        client.put("/api/settings/llm.api_key", json={"value": "sk-x", "is_secret": True})
+        result = client.post("/api/reset", json={"keep": ["ui.password_hash"]}).json()
+        assert result["deleted"]["settings"] == 1
+        assert [row["key"] for row in client.get("/api/settings").json()] == ["ui.password_hash"]

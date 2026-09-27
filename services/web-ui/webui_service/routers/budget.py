@@ -52,25 +52,52 @@ async def budget_page(request: Request, month: str | None = None):
 
 
 @router.post("/budget/{month}/set")
-async def budget_set(request: Request, month: str, category_id: int = Form(...), amount: str = Form("0")):
+async def budget_set(
+    request: Request, month: str, category_id: str = Form(""), amount: str = Form("0")
+):
+    if not category_id.strip():
+        return back(f"/budget?month={month}", err="Pick a category to budget.")
     try:
         await request.app.state.clients.budget.put(
-            f"/api/budget/{month}/categories/{category_id}", json={"amount": amount or "0"}
+            f"/api/budget/{month}/categories/{int(category_id)}",
+            json={"amount": amount.strip() or "0"},
         )
     except ServiceError as exc:
         return back(f"/budget?month={month}", err=str(exc.detail))
-    return back(f"/budget?month={month}", msg="Budget saved")
+    return back(f"/budget?month={month}", msg=f"Budget saved, and applies from {month} onward")
 
 
-@router.post("/budget/{month}/copy-previous")
-async def budget_copy(request: Request, month: str):
+@router.post("/budget/{month}/remove")
+async def budget_remove(request: Request, month: str, category_id: int = Form(...)):
+    """Take a category off the budget from this month on. Earlier months keep
+    whatever they had."""
     try:
-        result = await request.app.state.clients.budget.post(
-            f"/api/budget/{month}/copy-from-previous"
+        await request.app.state.clients.budget.put(
+            f"/api/budget/{month}/categories/{category_id}", json={"amount": "0"}
         )
     except ServiceError as exc:
         return back(f"/budget?month={month}", err=str(exc.detail))
-    return back(f"/budget?month={month}", msg=f"Copied {result['copied']} budgets from last month")
+    return back(
+        f"/budget?month={month}",
+        msg=f"Removed from the budget from {month} onward - earlier months are unchanged",
+    )
+
+
+@router.post("/budget/{month}/revert")
+async def budget_revert(request: Request, month: str, category_id: int = Form(...)):
+    """Undo this month's change so the category inherits again."""
+    try:
+        result = await request.app.state.clients.budget.delete(
+            f"/api/budget/{month}/categories/{category_id}"
+        )
+    except ServiceError as exc:
+        return back(f"/budget?month={month}", err=str(exc.detail))
+    if result.get("budgeted"):
+        return back(
+            f"/budget?month={month}",
+            msg=f"Reverted to {result['amount']}, carried forward from {result['since']}",
+        )
+    return back(f"/budget?month={month}", msg="Change undone - no longer budgeted here")
 
 
 @router.get("/goals")

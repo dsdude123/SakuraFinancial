@@ -48,7 +48,7 @@ CASHFLOW_ACCOUNT_TYPES = ("checking", "savings", "credit_card", "cash")
 CATEGORY_KINDS = ("expense", "income")
 TRANSACTION_STATUSES = ("uncleared", "cleared", "reconciled")
 TRANSACTION_KINDS = ("normal", "transfer", "valuation")
-ALIAS_MATCH_TYPES = ("exact", "prefix", "contains")
+ALIAS_MATCH_TYPES = ("exact", "regex", "prefix", "contains")
 
 
 def utcnow() -> datetime:
@@ -114,9 +114,18 @@ class Payee(Base):
 
 
 class PayeeAlias(Base):
-    """A normalized CSV description pattern that identifies a payee. Created
-    automatically when the user resolves an unknown description during import,
-    so the next import maps it without asking."""
+    r"""A CSV description pattern that identifies a payee. Created automatically
+    when the user resolves an unknown description during import, so the next
+    import maps it without asking.
+
+    ``exact``/``prefix``/``contains`` patterns are stored normalized (upper
+    case, whitespace collapsed) and compared against the normalized
+    description. ``regex`` patterns are stored **verbatim** and matched
+    case-insensitively: normalizing one would corrupt it, since upper-casing
+    turns ``\d`` into ``\D`` and inverts its meaning. Regex is what handles
+    the statements where one merchant arrives with a different reference
+    number every time.
+    """
 
     __tablename__ = "payee_aliases"
     __table_args__ = (UniqueConstraint("pattern", "match_type"),)
@@ -232,6 +241,10 @@ class TransferRule(Base):
     match_type: Mapped[str] = mapped_column(String(10), default="prefix")
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # How far apart the two sides of one transfer may be dated. Money leaving
+    # on a Friday can land in the other account the following Tuesday, and both
+    # statements report their own date, so matching needs slack.
+    match_days: Mapped[int] = mapped_column(Integer, default=5)
 
     account: Mapped[Account] = relationship()
 
@@ -252,7 +265,7 @@ class ImportProfile(Base):
 
 
 IMPORT_BATCH_STATUSES = ("review", "committed", "aborted")
-IMPORT_ROW_STATUSES = ("ready", "needs_payee", "duplicate", "transfer")
+IMPORT_ROW_STATUSES = ("ready", "needs_payee", "duplicate", "transfer", "counterpart")
 
 
 class ImportBatch(Base):

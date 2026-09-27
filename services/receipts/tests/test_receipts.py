@@ -241,3 +241,24 @@ class TestExportImport:
         response = client.post("/api/import", json=exported)
         assert response.json() == {"imported": 1}
         assert len(client.get("/api/documents").json()) == 1
+
+
+class TestReset:
+    def test_reset_clears_documents_and_their_files(self, client, upload, tmp_path):
+        """Receipts owns files on disk as well as rows, so a reset that only
+        emptied the tables would leave the volume full of orphaned scans."""
+        upload(b"CORNER STORE\nTOTAL 12.34\n")
+        upload(b"HARDWARE SHOP\nTOTAL 56.78\n")
+        data_dir = tmp_path / "receipts-data"
+        assert len(list(data_dir.iterdir())) == 2
+
+        result = client.post("/api/reset").json()
+        assert result["deleted"]["documents"] == 2
+        assert result["files_removed"] == 2
+        assert client.get("/api/documents").json() == []
+        assert list(data_dir.iterdir()) == []
+
+    def test_reset_on_an_empty_service_is_harmless(self, client):
+        result = client.post("/api/reset").json()
+        assert result["deleted"]["documents"] == 0
+        assert client.get("/api/documents").json() == []

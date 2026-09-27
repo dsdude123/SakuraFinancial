@@ -121,6 +121,7 @@ def stack(tmp_path):
             }
         ),
         secret_key="test-secret",
+        data_dir=str(tmp_path / "webui-data"),
     )
     return {
         "ledger": ledger_app,

@@ -10,7 +10,9 @@ parses completely. That rule comes straight from the requirements.
 Bank profile keys:
     delimiter        default ","
     has_header       default true; column refs are header names (else indexes)
-    skip_top_rows    junk lines above the header/data, default 0
+    skip_top_rows    content lines above the header/data, default 0.
+                     **Blank lines never count** — brokers pad their preamble
+                     with them and nobody should have to count invisible rows.
     date_column      required
     date_format      strptime format, default "%m/%d/%Y"
     description_column  required
@@ -19,15 +21,22 @@ Bank profile keys:
     amount_column    required for single mode
     debit_column / credit_column   required for debit_credit mode
     negate_amount    default false — set when the bank writes charges positive
+    null_tokens      placeholder strings that mean "no value" in optional
+                     columns, default ``DEFAULT_NULL_TOKENS`` ("--", "n/a", ...)
 
 Stock profile keys (used by the stocks service):
-    delimiter / has_header / skip_top_rows / date_column / date_format as above
+    delimiter / has_header / skip_top_rows / date_column / date_format /
+    null_tokens as above
     action_column    required — the broker's transaction-type string
     action_map       required — {"Bought": "buy", "YOU SOLD": "sell", ...}
                      an unmapped action string is a row error (all-or-nothing)
     symbol_column    optional (cash-only actions may have none)
     quantity_column / price_column / fee_column / amount_column  optional
     description_column  optional
+
+Share quantities are stored as magnitudes: brokers write a sale as a negative
+quantity ("-1.500") and the direction already lives in the action, so buy/sell/
+vest quantities are normalized to positive here.
 """
 
 from __future__ import annotations
@@ -41,6 +50,12 @@ from decimal import Decimal
 from .money import AmountParseError, parse_amount
 
 STOCK_ACTIONS = ("buy", "sell", "dividend", "vest", "deposit", "withdraw", "fee", "ignore")
+
+# Brokers fill columns that don't apply to a row with a placeholder rather than
+# leaving them empty — a cash deposit gets "--" in the Symbol column. Treated as
+# blank in *optional* columns only; a required column holding one is still an
+# error the user needs to see.
+DEFAULT_NULL_TOKENS = ("--", "---", "n/a", "na", "none", "null")
 
 
 @dataclass
@@ -95,11 +110,21 @@ class _Grid:
 
 
 def _read_grid(text: str, profile: dict) -> _Grid:
+    """Drop blank lines, skip the profile's preamble, then split off the header.
+
+    Blank lines are removed *before* ``skip_top_rows`` is applied, so the number
+    the user types is the number of junk lines they can actually see in the
+    file. Line numbers stay true to the original file so error reports point at
+    the right line."""
     delimiter = profile.get("delimiter", ",")
     skip_top = int(profile.get("skip_top_rows", 0))
     has_header = bool(profile.get("has_header", True))
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-    all_rows = [(index + 1, row) for index, row in enumerate(reader)]
+    all_rows = [
+        (index + 1, row)
+        for index, row in enumerate(reader)
+        if any(cell.strip() for cell in row)
+    ]
     all_rows = all_rows[skip_top:]
     header = None
     if has_header:
@@ -107,10 +132,9 @@ def _read_grid(text: str, profile: dict) -> _Grid:
             raise CsvValidationError([RowError(1, "file has no header row", "")])
         header = [cell.strip().lower() for cell in all_rows[0][1]]
         all_rows = all_rows[1:]
-    data_rows = [(line, row) for line, row in all_rows if any(cell.strip() for cell in row)]
-    if not data_rows:
+    if not all_rows:
         raise CsvValidationError([RowError(1, "file contains no data rows", "")])
-    return _Grid(header=header, rows=data_rows)
+    return _Grid(header=header, rows=all_rows)
 
 
 class _RowReader:
@@ -120,6 +144,10 @@ class _RowReader:
     def __init__(self, grid: _Grid, profile: dict):
         self.grid = grid
         self.profile = profile
+        tokens = profile.get("null_tokens")
+        if tokens is None:
+            tokens = DEFAULT_NULL_TOKENS
+        self.null_tokens = {str(token).strip().lower() for token in tokens}
 
     def resolve_index(self, column_ref, line_no: int, row: list[str], errors: list[RowError]):
         if column_ref is None or column_ref == "":
@@ -150,6 +178,12 @@ class _RowReader:
         if index is None or index >= len(row):
             return ""
         return row[index].strip()
+
+    def optional_cell(self, row: list[str], index: int | None) -> str:
+        """A cell from a column that may not apply to this row: the broker's
+        placeholder ("--", "N/A", ...) reads as empty rather than as data."""
+        value = self.cell(row, index)
+        return "" if value.lower() in self.null_tokens else value
 
 
 def _parse_date_cell(value: str, date_format: str, line_no: int, raw: str, errors: list[RowError]):
@@ -245,7 +279,7 @@ def parse_bank_csv(text: str, profile: dict) -> list[ParsedBankRow]:
                     date=when,
                     description=description,
                     amount=amount,
-                    memo=reader.cell(row, memo_index) if memo_index is not None else "",
+                    memo=reader.optional_cell(row, memo_index) if memo_index is not None else "",
                 )
             )
     if errors:
@@ -308,7 +342,7 @@ def parse_stock_csv(text: str, profile: dict) -> list[ParsedStockRow]:
 
         def optional_decimal(key: str, label: str):
             index = reader.resolve_index(profile.get(key), line_no, row, row_errors)
-            value = reader.cell(row, index) if index is not None else ""
+            value = reader.optional_cell(row, index) if index is not None else ""
             if not value:
                 return None
             return _parse_amount_cell(value, line_no, raw, row_errors, label)
@@ -327,22 +361,28 @@ def parse_stock_csv(text: str, profile: dict) -> list[ParsedStockRow]:
             continue
         if action == "ignore":
             continue
-        if action in ("buy", "sell", "vest") and (not reader.cell(row, symbol_index) or quantity is None):
-            errors.append(
-                RowError(line_no, f"{action} rows need a symbol and a quantity", raw)
-            )
-            continue
+        symbol = reader.optional_cell(row, symbol_index).upper() if symbol_index is not None else ""
+        if action in ("buy", "sell", "vest"):
+            if not symbol or quantity is None:
+                errors.append(RowError(line_no, f"{action} rows need a symbol and a quantity", raw))
+                continue
+            if quantity == 0:
+                errors.append(RowError(line_no, f"{action} rows need a non-zero quantity", raw))
+                continue
+            # Brokers sign the quantity by direction ("Sold ... -1.500"); the
+            # action already carries the direction, so store the magnitude.
+            quantity = abs(quantity)
         parsed.append(
             ParsedStockRow(
                 line_no=line_no,
                 date=when,
                 action=action,
-                symbol=reader.cell(row, symbol_index).upper() if symbol_index is not None else "",
+                symbol=symbol,
                 quantity=quantity,
                 price=price,
                 fee=fee,
                 amount=amount,
-                description=reader.cell(row, desc_index) if desc_index is not None else "",
+                description=reader.optional_cell(row, desc_index) if desc_index is not None else "",
             )
         )
     if errors:

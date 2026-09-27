@@ -31,14 +31,20 @@ def back(url: str, msg: str = "", err: str = "") -> RedirectResponse:
 
 
 @router.get("/accounts")
-async def accounts_list(request: Request):
+async def accounts_list(request: Request, edit: int | None = None):
     clients = request.app.state.clients
     accounts = await clients.ledger.get("/api/accounts", params={"include_inactive": True})
     currencies = await clients.ledger.get("/api/currencies")
+    editing = next((a for a in accounts if a["id"] == edit), None)
     return render(
         request,
         "accounts_list.html",
-        {"accounts": accounts, "currencies": currencies, "types": ACCOUNT_TYPES},
+        {
+            "accounts": accounts,
+            "currencies": currencies,
+            "types": ACCOUNT_TYPES,
+            "editing": editing,
+        },
     )
 
 
@@ -71,23 +77,28 @@ async def account_create(
 async def account_update(
     request: Request,
     account_id: int,
-    name: str = Form(...),
-    opening_balance: str = Form("0"),
+    name: str = Form(""),
+    type: str = Form(""),
+    currency_code: str = Form(""),
+    opening_balance: str = Form(""),
     note: str = Form(""),
     active: str = Form(""),
 ):
+    if not name.strip():
+        return back("/accounts", err="An account needs a name.")
+    body: dict = {"name": name.strip(), "note": note, "active": active == "on"}
+    # Only send what the form actually offered, so the deactivate button on the
+    # list doesn't have to round-trip every field to avoid clobbering them.
+    if type.strip():
+        body["type"] = type.strip()
+    if currency_code.strip():
+        body["currency_code"] = currency_code.strip()
+    if opening_balance.strip():
+        body["opening_balance"] = opening_balance.strip()
     try:
-        await request.app.state.clients.ledger.put(
-            f"/api/accounts/{account_id}",
-            json={
-                "name": name,
-                "opening_balance": opening_balance or "0",
-                "note": note,
-                "active": active == "on",
-            },
-        )
+        await request.app.state.clients.ledger.put(f"/api/accounts/{account_id}", json=body)
     except ServiceError as exc:
-        return back("/accounts", err=str(exc.detail))
+        return back(f"/accounts?edit={account_id}", err=str(exc.detail))
     return back("/accounts", msg="Account updated")
 
 
