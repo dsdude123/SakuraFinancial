@@ -72,6 +72,8 @@ def apply_transaction(
     amount: Decimal | None = None,
     fees: Decimal = ZERO,
     note: str = "",
+    transfer_group_id: str | None = None,
+    external_account: str | None = None,
     import_hash: str | None = None,
 ) -> StockTransaction:
     """Create one transaction and its side effects (lots, FIFO reduction).
@@ -91,6 +93,8 @@ def apply_transaction(
         price=price,
         fees=fees or ZERO,
         note=note,
+        transfer_group_id=transfer_group_id,
+        external_account=external_account,
         import_hash=import_hash,
     )
 

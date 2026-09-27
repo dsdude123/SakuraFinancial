@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..db import get_db
 from ..logic.transactions import (
     create_transaction,
+    create_external_transfer,
     create_transfer,
     replace_splits,
 )
@@ -61,6 +62,21 @@ class TransferIn(BaseModel):
     amount: Decimal
     to_amount: Decimal | None = None
     memo: str = ""
+
+
+class ExternalTransferIn(BaseModel):
+    """A transfer between one ledger account and an account owned by another
+    service (a brokerage in the stocks service). ``direction`` is from this
+    account's point of view; ``amount`` is always positive."""
+
+    account_id: int
+    date: dt.date
+    amount: Decimal
+    direction: str = "out"
+    external_account: str
+    external_name: str = ""
+    memo: str = ""
+    transfer_group_id: str | None = None
 
 
 def load_txn_or_404(db: Session, transaction_id: int) -> Transaction:
@@ -216,9 +232,16 @@ def delete(transaction_id: int, db: Session = Depends(get_db)):
             if leg.id != txn.id:
                 deleted.append(leg.id)
                 db.delete(leg)
+    external_account, group = txn.external_account, txn.transfer_group_id
     db.delete(txn)
     db.commit()
-    return {"deleted": deleted}
+    # A leg whose other side lives in another service can't be deleted from
+    # here, so say so instead of silently leaving half a transfer behind.
+    return {
+        "deleted": deleted,
+        "transfer_group_id": group,
+        "external_account": external_account,
+    }
 
 
 @router.post("/transfers")
@@ -247,6 +270,31 @@ def transfer(body: TransferIn, db: Session = Depends(get_db)):
     )
     db.commit()
     return {"out": transaction_dict(leg_out), "in": transaction_dict(leg_in)}
+
+
+@router.post("/transfers/external")
+def external_transfer(body: ExternalTransferIn, db: Session = Depends(get_db)):
+    """Book this side of a transfer to or from an account another service owns.
+
+    The caller (the web UI) writes the other side and passes the group id so
+    both rows agree, or takes the generated one from the response.
+    """
+    account = db.get(Account, body.account_id)
+    if account is None:
+        raise HTTPException(422, "unknown account")
+    leg = create_external_transfer(
+        db,
+        account=account,
+        date=body.date,
+        amount=body.amount,
+        direction=body.direction,
+        external_account=body.external_account,
+        external_name=body.external_name,
+        memo=body.memo,
+        transfer_group_id=body.transfer_group_id,
+    )
+    db.commit()
+    return transaction_dict(leg)
 
 
 class BulkEdit(BaseModel):

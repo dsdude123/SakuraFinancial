@@ -57,6 +57,22 @@ class TxnIn(BaseModel):
     note: str = ""
 
 
+class ExternalTransferIn(BaseModel):
+    """The investment side of a transfer with a bank account the ledger owns.
+    ``direction`` is from this account's point of view: "in" is cash arriving
+    (a deposit), "out" is cash leaving (a withdrawal). ``amount`` is always
+    positive, in this account's currency."""
+
+    account_id: int
+    date: dt.date
+    amount: Decimal
+    direction: str = "in"
+    external_account: str
+    external_name: str = ""
+    transfer_group_id: str
+    note: str = ""
+
+
 class GrantIn(BaseModel):
     account_id: int
     symbol: str
@@ -105,6 +121,8 @@ def txn_dict(txn: StockTransaction) -> dict:
         "fees": money_str(txn.fees),
         "realized_gain": money_str(txn.realized_gain),
         "note": txn.note,
+        "transfer_group_id": txn.transfer_group_id,
+        "external_account": txn.external_account,
     }
 
 
@@ -190,6 +208,53 @@ def create_transaction(body: TxnIn, db: Session = Depends(get_db)):
     )
     db.commit()
     return txn_dict(txn)
+
+
+@router.post("/transfers/external")
+def external_transfer(body: ExternalTransferIn, db: Session = Depends(get_db)):
+    """Book the investment side of a bank <-> brokerage cash transfer.
+
+    It is an ordinary deposit/withdraw plus the link back to the ledger leg
+    that moved the same money out of (or into) the bank account. The ledger
+    writes its leg first and passes the group id, so both sides agree even
+    though they live in different databases.
+    """
+    account = get_account_or_404(db, body.account_id)
+    if body.direction not in ("in", "out"):
+        raise HTTPException(422, "direction must be 'in' or 'out'")
+    if body.amount <= 0:
+        raise HTTPException(422, "transfer amount must be positive")
+    label = body.external_name or body.external_account
+    txn = portfolio.apply_transaction(
+        db,
+        account=account,
+        type="deposit" if body.direction == "in" else "withdraw",
+        date=body.date,
+        amount=body.amount,
+        note=body.note
+        or (f"Transfer from {label}" if body.direction == "in" else f"Transfer to {label}"),
+        transfer_group_id=body.transfer_group_id,
+        external_account=body.external_account,
+    )
+    db.commit()
+    return txn_dict(txn)
+
+
+@router.delete("/transfers/external/{transfer_group_id}")
+def delete_external_transfer(transfer_group_id: str, db: Session = Depends(get_db)):
+    """Remove this service's side of a transfer, by group id. The ledger deletes
+    its own leg; whoever deletes one side calls the other so a transfer never
+    survives as half of itself."""
+    rows = db.execute(
+        select(StockTransaction).where(
+            StockTransaction.transfer_group_id == transfer_group_id
+        )
+    ).scalars().all()
+    deleted = [row.id for row in rows]
+    for row in rows:
+        db.delete(row)
+    db.commit()
+    return {"deleted": deleted}
 
 
 @router.get("/valuation")

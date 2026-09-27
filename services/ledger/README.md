@@ -29,6 +29,13 @@ here. Live OpenAPI docs at `/docs` on the service port.
 - **Transfers** are paired transactions sharing `transfer_group_id`, splits
   have no category, and they never appear in spending/cash-flow reports.
   Deleting one leg deletes both.
+- **Transfers to an investment account** (`POST /api/transfers/external`) have
+  only one leg here: the far account belongs to the stocks service, so the leg
+  records its ref in `external_account` ("stock:1") and the caller books the
+  matching cash row there under the same `transfer_group_id`. Still a
+  categoryless transfer, so funding a brokerage is never spending. Deleting the
+  leg returns its `external_account` and group id so the caller can remove the
+  other side — see `docs/architecture.md`.
 - **Valuations:** `POST /api/accounts/{id}/valuation` records an asset's new
   value as a `kind='valuation'` transaction (the delta). Net worth sees it;
   monthly cash flow never does.
@@ -40,7 +47,7 @@ here. Live OpenAPI docs at `/docs` on the service port.
 | Accounts | `GET/POST /api/accounts`, `GET/PUT/DELETE /api/accounts/{id}`, `POST /api/accounts/{id}/valuation` |
 | Categories | `GET/POST /api/categories`, `PUT/DELETE /api/categories/{id}`, `POST /api/seed-defaults` (first run only) |
 | Payees | `GET/POST /api/payees`, `GET /api/payees/{id}` (incl. auto-fill data), aliases under `/api/payees/{id}/aliases` |
-| Transactions | `GET/POST /api/transactions` (rich filters: account, date range, category, payee, `q`, exact `amount`, `uncategorized`), `PUT /api/transactions/{id}`, `PUT /api/transactions/{id}/splits`, `POST /api/transfers` |
+| Transactions | `GET/POST /api/transactions` (rich filters: account, date range, category, payee, `q`, exact `amount`, `uncategorized`), `PUT /api/transactions/{id}`, `PUT /api/transactions/{id}/splits`, `POST /api/transfers`, `POST /api/transfers/external` |
 | FX | `GET/POST /api/fx`, `GET /api/fx/rate` (manual rates; inverse pairs resolve automatically) |
 | Reports | `/api/reports/category-actuals`, `/api/reports/cashflow`, `/api/reports/net-worth` |
 | Backup | `GET /api/export`, `POST /api/import` (full replace, IDs preserved) |

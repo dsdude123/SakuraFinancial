@@ -14,6 +14,13 @@ Live OpenAPI docs at `/docs`.
 Cash is derived (`opening_cash` + signed cash effects of transactions); lots
 carry their own cost basis, so unrealized/realized gains are exact.
 
+Cash that came from a bank account arrives through
+`POST /api/transfers/external`: an ordinary `deposit`/`withdraw` that also
+carries the ledger leg's `transfer_group_id` and the bank account's ref
+(`external_account="bank:3"`). `DELETE /api/transfers/external/{group}` removes
+this side when the ledger's leg goes, so a transfer never survives as half of
+itself. The full picture is in `docs/architecture.md`.
+
 ## Prices
 
 - **Daily fetch**: an in-process APScheduler job pulls the previous close
@@ -50,6 +57,8 @@ Nothing is ever scheduled.
 ## Other endpoints
 
 Accounts CRUD, transactions (`buy/sell/dividend/vest/deposit/withdraw/fee`),
+`POST /api/transfers/external` + `DELETE /api/transfers/external/{group}`
+(bank <-> brokerage cash),
 `/api/valuation` and `/api/valuation/series` (feeds the net-worth report),
 RSU grants + `POST /api/rsu/vests/{id}/release`, `GET/POST /api/export|import`
 for backup.

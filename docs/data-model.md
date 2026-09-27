@@ -22,7 +22,7 @@ mirror these table names; `app models.py` files are the source of truth.
 | categories | name, parent (one level: Food → Groceries), kind (`expense`/`income`) as *default direction* — splits accept both signs so reimbursements net. APIs return a `path` ("Food: Groceries") and list parents immediately followed by their children |
 | payees | name, default_category_id (auto-fill), active |
 | payee_aliases | description pattern (`exact`/`regex`/`prefix`/`contains`) → payee; learned during import review. Literal patterns are stored normalized; **regex patterns are stored verbatim** and matched case-insensitively (normalizing one would turn `\d` into `\D`). On a tie the most deliberate type wins, in that order |
-| transactions | account, date, payee, memo, status (`uncleared/cleared/reconciled`), kind (`normal/transfer/valuation`), transfer_group_id (pairs transfer legs), import_hash (dedup) |
+| transactions | account, date, payee, memo, status (`uncleared/cleared/reconciled`), kind (`normal/transfer/valuation`), transfer_group_id (pairs transfer legs), external_account (only on a transfer whose other side is *not* a ledger account — `"stock:1"`, an investment account in the stocks service; such a transfer has one leg here and the stocks row with the same transfer_group_id is the other), import_hash (dedup) |
 | transaction_splits | the money: transaction, category (NULL for transfers/valuations/uncategorized), signed amount, memo. A transaction's total = sum of its splits |
 | bills | payee, category, frequency (`weekly…annual`), expected amount, is_variable, next_due, active |
 | bill_occurrences | bill, due_date (unique per bill), expected_amount, status (`upcoming/paid/skipped/amount_review`), matched_transaction_id, actual_amount |
@@ -48,7 +48,7 @@ ledger data at request time — never stored, never stale.
 | securities | symbol (unique), name, active |
 | lots | account, security, quantity, total cost_basis, acquired_date, source (`buy/vest/manual`). FIFO unit for sells |
 | rsu_grants / vesting_events | grant (account, security, grant_date) with dated share tranches; released events link the lot they created |
-| stock_transactions | type (`buy/sell/dividend/vest/deposit/withdraw/fee`), signed cash `amount`, quantity/price/fees, realized_gain (sells), import_hash |
+| stock_transactions | type (`buy/sell/dividend/vest/deposit/withdraw/fee`), signed cash `amount`, quantity/price/fees, realized_gain (sells), import_hash. A `deposit`/`withdraw` that is the far side of a bank transfer also carries transfer_group_id and external_account (`"bank:3"`, a ledger account); cash that simply appeared leaves both NULL |
 | prices | (security, date) → close, source (`yahoo/manual`); manual wins over yahoo. Kept forever |
 | stock_import_profiles | CSV config JSON incl. the **action_map** (broker strings → internal actions) |
 | stock_import_batches / stock_import_rows | review stage; rows are `ready`, `duplicate` (already imported into this account), or `no_lots` (a sale of shares the account doesn't hold — bought before the statement's window) |
@@ -63,7 +63,14 @@ ledger data at request time — never stored, never stale.
 
 ## Cross-service references
 
-There are no cross-database foreign keys. Budget/receipts reference ledger
+There are no cross-database foreign keys. A transfer between a bank account and
+an investment account is therefore two rows in two databases — a categoryless
+ledger transfer leg and a stocks `deposit`/`withdraw` — tied together by a
+shared `transfer_group_id` plus each side's `external_account` ref
+(`"bank:<id>"` / `"stock:<id>"`). The web UI writes both and undoes the first
+if the second fails; see `docs/architecture.md`.
+
+Budget/receipts reference ledger
 category and transaction IDs over the API; the Monthly Updates page stores
 skip flags in settings keys (`monthly.skip.<yyyy-mm>.<service>.<account_id>`).
 Because exports preserve primary keys, restoring all services from one backup

@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from ..auth import require_login
 from ..clients import ServiceError
 from ..rendering import render
+from ..transfers import TransferError, transfer_bank_stock
 from .accounts import back
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -104,6 +105,13 @@ async def stock_account_page(request: Request, account_id: int):
     if account["type"] == "rsu":
         grants = await clients.stocks.get("/api/rsu/grants", params={"account_id": account_id})
     analyses = await clients.stocks.get("/api/analyses", params={"account_id": account_id})
+    # Cash gets here from a bank account, so the page offers the transfer
+    # directly; the ledger owns those accounts. If the ledger is unreachable
+    # the rest of the page still renders and the form simply isn't offered.
+    try:
+        bank_accounts = await clients.ledger.get("/api/accounts")
+    except ServiceError:
+        bank_accounts = []
     return render(
         request,
         "stock_account.html",
@@ -112,9 +120,49 @@ async def stock_account_page(request: Request, account_id: int):
             "txns": txns,
             "grants": grants,
             "analyses": analyses[:5],
+            "bank_accounts": bank_accounts,
             "today": dt.date.today().isoformat(),
         },
     )
+
+
+@router.post("/stocks/accounts/{account_id}/transfer")
+async def stock_transfer_add(
+    request: Request,
+    account_id: int,
+    date: str = Form(""),
+    direction: str = Form("in"),
+    bank_account_id: str = Form(""),
+    amount: str = Form(""),
+    bank_amount: str = Form(""),
+    memo: str = Form(""),
+):
+    """The same movement as the register's transfer form, started from this
+    side: "in" is cash arriving from the bank account, "out" is cash going
+    back to it. ``amount`` is in this account's currency and ``bank_amount``
+    is what the bank account saw, needed only when the two differ."""
+    url = f"/stocks/accounts/{account_id}"
+    try:
+        bank_id = int(str(bank_account_id).strip())
+    except ValueError:
+        return back(url, err="Pick the bank account the money moves through.")
+    try:
+        result = await transfer_bank_stock(
+            request.app.state.clients,
+            bank_account_id=bank_id,
+            stock_account_id=account_id,
+            date=date,
+            # The helper is written bank-side-first, so a cross-currency pair
+            # arrives the other way round from this form.
+            amount=bank_amount.strip() or amount,
+            to_amount=amount if bank_amount.strip() else "",
+            to_stock=direction == "in",
+            memo=memo,
+        )
+    except TransferError as exc:
+        return back(url, err=f"Transfer not saved: {exc.detail}")
+    moved = "from" if direction == "in" else "to"
+    return back(url, msg=f"Transfer {moved} {result['bank_name']} saved")
 
 
 @router.post("/stocks/accounts/{account_id}/transactions")

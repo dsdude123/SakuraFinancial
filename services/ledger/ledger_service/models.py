@@ -17,6 +17,13 @@ The design choices that matter (they come straight from the requirements):
 - Asset/liability value changes are ``kind='valuation'`` transactions:
   visible in net worth, invisible in cash flow. (A car losing $38k is not a
   cash expense.)
+- Money can also move to an account this service does not own — a brokerage
+  or RSU account lives in the stocks service. That transfer is a *single*
+  leg here, carrying ``external_account`` ("stock:1") instead of a second
+  ledger transaction; the far side is a matching cash row in the other
+  service sharing the same ``transfer_group_id``. It is still a categoryless
+  ``kind='transfer'``, so cash-flow reports ignore it, and net worth stays
+  right because the other service reports the money it received.
 """
 
 from __future__ import annotations
@@ -149,6 +156,11 @@ class Transaction(Base):
     status: Mapped[str] = mapped_column(String(12), default="uncleared")
     kind: Mapped[str] = mapped_column(String(10), default="normal", index=True)
     transfer_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Set only on a transfer whose other side is not a ledger account: the ref
+    # of an account owned by another service, "<service>:<id>" (today only
+    # "stock:<id>"). Such a transfer has one leg here; ``transfer_group_id``
+    # ties it to the cash row the other service booked.
+    external_account: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

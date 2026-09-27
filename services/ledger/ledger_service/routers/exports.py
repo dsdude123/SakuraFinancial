@@ -148,6 +148,7 @@ def export_core(db: Session) -> dict:
                 "status": t.status,
                 "kind": t.kind,
                 "transfer_group_id": t.transfer_group_id,
+                "external_account": t.external_account,
                 "import_hash": t.import_hash,
                 "splits": [
                     {
@@ -300,6 +301,7 @@ def import_core(db: Session, data: dict) -> dict:
             status=t.get("status", "uncleared"),
             kind=t.get("kind", "normal"),
             transfer_group_id=t.get("transfer_group_id"),
+            external_account=t.get("external_account"),
             import_hash=t.get("import_hash"),
         )
         for s in t.get("splits", []):

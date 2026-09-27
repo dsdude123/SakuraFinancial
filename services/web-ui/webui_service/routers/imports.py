@@ -24,13 +24,15 @@ from fastapi.responses import RedirectResponse
 
 from ..auth import require_login
 from ..clients import ServiceError
+from ..refs import KIND_LABELS, KINDS, split_ref
 from ..rendering import render
 from .accounts import back
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
-KINDS = ("bank", "stock")
-KIND_LABELS = {"bank": "Bank / credit card", "stock": "Brokerage"}
+# Re-exported for the templates and tests that import them from here; the
+# namespacing itself lives in webui_service.refs, shared with transfers.
+__all__ = ["router", "KINDS", "KIND_LABELS", "split_ref"]
 
 STOCK_ACTIONS = ("buy", "sell", "dividend", "vest", "deposit", "withdraw", "fee", "ignore")
 
@@ -38,17 +40,6 @@ STOCK_ACTIONS = ("buy", "sell", "dividend", "vest", "deposit", "withdraw", "fee"
 def service_for(request: Request, kind: str):
     clients = request.app.state.clients
     return clients.stocks if kind == "stock" else clients.ledger
-
-
-def split_ref(value: str, default_kind: str = "bank") -> tuple[str, str]:
-    """"stock:4" -> ("stock", "4"). A bare id means the bank ledger, which keeps
-    older bookmarks and the monthly page's per-account forms working."""
-    text = str(value or "").strip()
-    if ":" in text:
-        kind, _, ident = text.partition(":")
-        if kind in KINDS:
-            return kind, ident.strip()
-    return default_kind, text
 
 
 def decode_upload(raw: bytes) -> str:
