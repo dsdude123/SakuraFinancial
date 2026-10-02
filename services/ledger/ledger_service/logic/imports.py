@@ -16,6 +16,13 @@ Flow (mirrors the wizard in the web UI):
    legs), aliases are learned, and every new transaction runs through bill
    matching — a fixed bill matched at a different amount comes back in the
    summary so the UI can ask "update the bill?".
+
+A transfer row whose counterparty is an *investment* account is the one case
+this service cannot finish on its own: the far side is a cash row in the stocks
+service. Commit writes the single ledger leg and hands the caller the list of
+settlements to make (``external_transfers`` in the summary), exactly as the
+manual transfer flow does — the ledger never calls another service to move
+money. See "Cash across the bank/broker seam" in docs/architecture.md.
 """
 
 from __future__ import annotations
@@ -46,7 +53,7 @@ from ..models import (
     TransferRule,
 )
 from .bills import match_transaction_to_bills
-from .transactions import create_transaction, create_transfer
+from .transactions import create_external_transfer, create_transaction, create_transfer
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +96,10 @@ def find_alias_payee(db: Session, description: str) -> PayeeAlias | None:
 def find_transfer_rule(db: Session, description: str, account_id: int) -> TransferRule | None:
     normalized = normalize_description(description)
     for rule in db.execute(select(TransferRule).where(TransferRule.active)).scalars():
-        if rule.account_id == account_id:
+        if rule.account_id is not None and rule.account_id == account_id:
             continue  # a rule can't transfer an account into itself
+        if rule.account_id is None and not rule.external_account:
+            continue  # a rule with no counterparty at all can't classify anything
         pattern = normalize_description(rule.pattern)
         if rule.match_type == "prefix" and normalized.startswith(pattern):
             return rule
@@ -103,7 +112,8 @@ def find_counterpart_leg(
     db: Session,
     *,
     account_id: int,
-    other_account_id: int,
+    other_account_id: int | None = None,
+    external_account: str | None = None,
     amount: Decimal,
     when: date,
     window_days: int,
@@ -121,23 +131,30 @@ def find_counterpart_leg(
     Only legs whose *other* side sits in the account this rule points at count,
     so an unrelated transfer of the same size isn't swallowed. ``claimed``
     stops two identical rows in one file from both matching the same leg.
+
+    For a rule pointing at an investment account there is no second ledger row
+    to look for: the leg itself names the far account in ``external_account``,
+    and that ref is the pairing.
     """
     if window_days < 0:
         window_days = 0
     earliest = when - timedelta(days=window_days)
     latest = when + timedelta(days=window_days)
-    candidates = db.execute(
-        select(Transaction).where(
-            Transaction.account_id == account_id,
-            Transaction.kind == "transfer",
-            Transaction.transfer_group_id.is_not(None),
-            Transaction.date >= earliest,
-            Transaction.date <= latest,
-        )
-    ).scalars().all()
+    query = select(Transaction).where(
+        Transaction.account_id == account_id,
+        Transaction.kind == "transfer",
+        Transaction.transfer_group_id.is_not(None),
+        Transaction.date >= earliest,
+        Transaction.date <= latest,
+    )
+    if external_account:
+        query = query.where(Transaction.external_account == external_account)
+    candidates = db.execute(query).scalars().all()
     for leg in sorted(candidates, key=lambda t: (abs((t.date - when).days), t.id)):
         if leg.id in claimed or leg.total != amount:
             continue
+        if external_account:
+            return leg  # the leg names the far account itself
         paired = db.execute(
             select(Transaction.id).where(
                 Transaction.transfer_group_id == leg.transfer_group_id,
@@ -195,10 +212,12 @@ def build_batch(
             rule = find_transfer_rule(db, parsed.description, account.id)
             if rule is not None:
                 row.transfer_account_id = rule.account_id
+                row.transfer_external_account = rule.external_account
                 leg = find_counterpart_leg(
                     db,
                     account_id=account.id,
                     other_account_id=rule.account_id,
+                    external_account=rule.external_account,
                     amount=parsed.amount,
                     when=parsed.date,
                     window_days=rule.match_days,
@@ -242,7 +261,13 @@ def reclassify_batch(db: Session, batch: ImportBatch) -> dict:
     for row in sorted(batch.rows, key=lambda r: r.line_no):
         if row.transaction_id is not None or row.status != "needs_payee":
             continue
-        before = (row.status, row.payee_id, row.category_id, row.transfer_account_id)
+        before = (
+            row.status,
+            row.payee_id,
+            row.category_id,
+            row.transfer_account_id,
+            row.transfer_external_account,
+        )
 
         digest = row.row_hash
         if digest not in remaining_imported:
@@ -258,10 +283,12 @@ def reclassify_batch(db: Session, batch: ImportBatch) -> dict:
             rule = find_transfer_rule(db, row.description, account.id)
             if rule is not None:
                 row.transfer_account_id = rule.account_id
+                row.transfer_external_account = rule.external_account
                 leg = find_counterpart_leg(
                     db,
                     account_id=account.id,
                     other_account_id=rule.account_id,
+                    external_account=rule.external_account,
                     amount=row.amount,
                     when=row.date,
                     window_days=rule.match_days,
@@ -278,12 +305,26 @@ def reclassify_batch(db: Session, batch: ImportBatch) -> dict:
                     row.status = "ready"
                     row.payee_id = alias.payee_id
                     row.category_id = alias.payee.default_category_id
-        if (row.status, row.payee_id, row.category_id, row.transfer_account_id) != before:
+        after = (
+            row.status,
+            row.payee_id,
+            row.category_id,
+            row.transfer_account_id,
+            row.transfer_external_account,
+        )
+        if after != before:
             changed += 1
     counts: dict[str, int] = {}
     for row in batch.rows:
         counts[row.status] = counts.get(row.status, 0) + 1
     return {"batch_id": batch.id, "changed": changed, "row_counts": counts}
+
+
+def payee_name_from_description(description: str) -> str:
+    """The payee name a row would get if it is committed without one: the
+    bank's description, with its whitespace tidied. The review screen shows it,
+    so "leave it blank" is a visible choice rather than a surprise."""
+    return " ".join(description.split()).strip()
 
 
 def payee_from_description(db: Session, description: str) -> int | None:
@@ -293,7 +334,7 @@ def payee_from_description(db: Session, description: str) -> int | None:
     so leaving those rows with no payee at all throws away information the
     statement handed over. Reuses an existing payee of that name rather than
     accumulating near-duplicates."""
-    name = " ".join(description.split()).strip()
+    name = payee_name_from_description(description)
     if not name:
         return None
     existing = db.execute(select(Payee).where(Payee.name == name)).scalar_one_or_none()
@@ -314,11 +355,40 @@ def commit_batch(
     account = accounts[batch.account_id]
     created = transfers = skipped = uncategorized = 0
     bill_matches: list[dict] = []
+    external_transfers: list[dict] = []
     for row in batch.rows:
         if not row.include or row.transaction_id is not None:
             skipped += 1
             continue
-        if row.status == "transfer" and row.transfer_account_id:
+        if row.status == "transfer" and row.transfer_external_account:
+            # The far side is an investment account in the stocks service. We
+            # write our leg and tell the caller what is left to settle there.
+            direction = "out" if row.amount < 0 else "in"
+            txn = create_external_transfer(
+                db,
+                account=account,
+                date=row.date,
+                amount=abs(row.amount),
+                direction=direction,
+                external_account=row.transfer_external_account,
+                memo=row.description,
+                import_hash=row.row_hash,
+            )
+            db.flush()
+            external_transfers.append(
+                {
+                    "row_id": row.id,
+                    "transaction_id": txn.id,
+                    "transfer_group_id": txn.transfer_group_id,
+                    "external_account": row.transfer_external_account,
+                    "direction": direction,
+                    "amount": money_str(abs(row.amount)),
+                    "date": row.date.isoformat(),
+                    "memo": row.description,
+                }
+            )
+            transfers += 1
+        elif row.status == "transfer" and row.transfer_account_id:
             other = accounts[row.transfer_account_id]
             if row.amount < 0:
                 leg_out, _ = create_transfer(
@@ -344,8 +414,10 @@ def commit_batch(
                 txn.import_hash = row.row_hash
             transfers += 1
         else:
+            named_from_description = False
             if row.payee_id is None and name_payees_from_descriptions:
                 row.payee_id = payee_from_description(db, row.description)
+                named_from_description = row.payee_id is not None
             category_id = row.category_id
             if category_id is None and row.payee is not None:
                 category_id = row.payee.default_category_id
@@ -364,6 +436,12 @@ def commit_batch(
             created += 1
             if row.learn_alias and row.payee_id is not None:
                 learn_exact_alias(db, row.payee_id, row.description)
+            elif named_from_description:
+                # Leaving the payee blank is an answer too: the description is
+                # the name. Learn it like any other, or the same row comes back
+                # needing the same answer every month - which looks exactly
+                # like the description never being used at all.
+                learn_exact_alias(db, row.payee_id, row.description, overwrite=False)
         db.flush()  # assign txn.id so rows/bills can reference it
         row.transaction_id = txn.id
         if txn.kind == "normal":
@@ -371,12 +449,16 @@ def commit_batch(
     batch.status = "committed"
     return {
         "batch_id": batch.id,
+        "account_id": batch.account_id,
         "created": created,
         "transfers": transfers,
         "skipped": skipped,
         "uncategorized": uncategorized,
         "bill_matches": bill_matches,
         "amount_review": [m for m in bill_matches if m.get("status") == "amount_review"],
+        # Legs whose far side lives in another service, for the caller to book
+        # there. Empty on an import with no investment transfers in it.
+        "external_transfers": external_transfers,
     }
 
 
@@ -450,6 +532,7 @@ def description_groups(batch: ImportBatch) -> list[dict]:
             {
                 **group,
                 "total": money_str(group["total"]),
+                "description_payee_name": payee_name_from_description(group["description"]),
                 "needs_payee": "needs_payee" in statuses,
                 "status": "needs_payee" if "needs_payee" in statuses else sorted(statuses)[0],
             }
@@ -459,14 +542,22 @@ def description_groups(batch: ImportBatch) -> list[dict]:
     return result
 
 
-def learn_exact_alias(db: Session, payee_id: int, description: str) -> None:
+def learn_exact_alias(
+    db: Session, payee_id: int, description: str, overwrite: bool = True
+) -> None:
+    """Map this exact description to a payee from now on.
+
+    ``overwrite=False`` is for an alias nobody asked for — the payee named after
+    the description — which must never repoint an alias the user chose
+    deliberately.
+    """
     pattern = normalize_description(description)
     existing = db.execute(
         select(PayeeAlias).where(PayeeAlias.pattern == pattern, PayeeAlias.match_type == "exact")
     ).scalar_one_or_none()
     if existing is None:
         db.add(PayeeAlias(payee_id=payee_id, pattern=pattern, match_type="exact"))
-    else:
+    elif overwrite:
         existing.payee_id = payee_id
 
 
@@ -494,8 +585,11 @@ def row_dict(row: ImportRow) -> dict:
         "include": row.include,
         "payee_id": row.payee_id,
         "payee_name": row.payee.name if row.payee else None,
+        # What committing it with no payee would file it under.
+        "description_payee_name": payee_name_from_description(row.description),
         "category_id": row.category_id,
         "transfer_account_id": row.transfer_account_id,
+        "transfer_external_account": row.transfer_external_account,
         "learn_alias": row.learn_alias,
         "transaction_id": row.transaction_id,
     }

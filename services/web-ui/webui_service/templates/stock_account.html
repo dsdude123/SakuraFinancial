@@ -72,7 +72,37 @@ analysis are off on purpose — you can't act on them here.</div>
     <input type="submit" class="btn btn-primary" value="Record">
   </form>
   <p class="small dim">buy/sell need symbol + qty + price (or total amount);
-  cash moves need just the amount.</p>
+  cash moves need just the amount. A deposit recorded here is cash appearing
+  out of nowhere &mdash; if it came from a bank account, use the transfer form
+  below instead so both sides match.</p>
+</div>
+
+<h2>Transfer cash with a bank account</h2>
+<div class="panel">
+  {% if bank_accounts %}
+  <form method="post" action="/stocks/accounts/{{ account.id }}/transfer">
+    Date <input type="text" name="date" size="10" value="{{ today }}">
+    <select name="direction">
+      <option value="in">in from</option>
+      <option value="out">out to</option>
+    </select>
+    <select name="bank_account_id">
+      {% for a in bank_accounts %}<option value="{{ a.id }}">{{ a.name }} ({{ a.currency_code }})</option>{% endfor %}
+    </select>
+    Amount <input type="text" name="amount" size="10">
+    <span class="dim small">bank side (cross-currency):</span> <input type="text" name="bank_amount" size="10">
+    Memo <input type="text" name="memo" size="12">
+    <input type="submit" class="btn btn-primary" value="Transfer">
+  </form>
+  <p class="small dim">One movement, both books: the bank account gets a
+  transfer out (never an expense &mdash; it stays out of spending reports and
+  budgets) and this account gets the cash. Deleting either side removes the
+  other. <b>Amount</b> is in this account's currency; fill in the bank side
+  only when the two accounts use different currencies.</p>
+  {% else %}
+  <p class="dim">No bank accounts to transfer with yet &mdash; add one under
+  Accounts first.</p>
+  {% endif %}
 </div>
 
 {% if account.type == 'rsu' %}
@@ -135,7 +165,7 @@ analysis are off on purpose — you can't act on them here.</div>
   {% for t in txns %}
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td>{{ t.date }}</td>
-    <td>{{ t.type }}</td>
+    <td>{{ t.type }}{% if t.external_account %} <span class="chip">transfer</span>{% endif %}</td>
     <td>{{ t.symbol or '' }}</td>
     <td class="num">{{ t.quantity or '' }}</td>
     <td class="num">{{ t.price|money }}</td>

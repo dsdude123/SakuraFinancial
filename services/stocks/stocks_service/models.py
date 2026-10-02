@@ -10,7 +10,10 @@ Three kinds of investment account, straight from the requirements:
   analysis for these — performance tracking only.
 
 Cash in an account is derived: opening_cash + the signed cash effects of its
-transactions. Prices are a per-security daily history (Yahoo or manual), so
+transactions. Cash that came from (or went to) a bank account in the ledger
+service arrives as a ``deposit``/``withdraw`` linked to the ledger's transfer
+leg by ``transfer_group_id``, so the money is never counted twice and never
+looks like spending. Prices are a per-security daily history (Yahoo or manual), so
 charts and valuations work from the day a security enters the system.
 """
 
@@ -116,7 +119,14 @@ class VestingEvent(Base):
 
 class StockTransaction(Base):
     """``amount`` is the signed CASH effect on the account (buy negative,
-    sell/dividend/deposit positive, withdraw/fee negative)."""
+    sell/dividend/deposit positive, withdraw/fee negative).
+
+    A ``deposit``/``withdraw`` that is the far side of a bank transfer also
+    carries ``transfer_group_id`` and ``external_account`` ("bank:3"): the
+    ledger booked one categoryless transfer leg against the bank account and
+    this row is the money arriving or leaving here. Cash that simply appeared
+    (an employer deposit straight into the brokerage) leaves both NULL.
+    """
 
     __tablename__ = "stock_transactions"
 
@@ -131,6 +141,8 @@ class StockTransaction(Base):
     fees: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"))
     realized_gain: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
+    transfer_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    external_account: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -198,7 +210,10 @@ class StockImportRow(Base):
     amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     row_hash: Mapped[str] = mapped_column(String(64), index=True)
-    status: Mapped[str] = mapped_column(String(12), default="ready")  # ready|duplicate
+    # ready | duplicate (already imported here) | no_lots (a sale of shares the
+    # account doesn't hold) | counterpart (the far side of a bank transfer that
+    # is already booked, so importing it would credit the money twice)
+    status: Mapped[str] = mapped_column(String(12), default="ready")
     include: Mapped[bool] = mapped_column(Boolean, default=True)
     transaction_id: Mapped[int | None] = mapped_column(
         ForeignKey("stock_transactions.id"), nullable=True

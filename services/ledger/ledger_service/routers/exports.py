@@ -148,6 +148,7 @@ def export_core(db: Session) -> dict:
                 "status": t.status,
                 "kind": t.kind,
                 "transfer_group_id": t.transfer_group_id,
+                "external_account": t.external_account,
                 "import_hash": t.import_hash,
                 "splits": [
                     {
@@ -194,6 +195,7 @@ def export_core(db: Session) -> dict:
                 "pattern": r.pattern,
                 "match_type": r.match_type,
                 "account_id": r.account_id,
+                "external_account": r.external_account,
                 "active": r.active,
                 "match_days": r.match_days,
             }
@@ -275,7 +277,8 @@ def import_core(db: Session, data: dict) -> dict:
                 id=r["id"],
                 pattern=r["pattern"],
                 match_type=r.get("match_type", "prefix"),
-                account_id=r["account_id"],
+                account_id=r.get("account_id"),
+                external_account=r.get("external_account"),
                 active=r.get("active", True),
                 match_days=r.get("match_days", 5),
             )
@@ -300,6 +303,7 @@ def import_core(db: Session, data: dict) -> dict:
             status=t.get("status", "uncleared"),
             kind=t.get("kind", "normal"),
             transfer_group_id=t.get("transfer_group_id"),
+            external_account=t.get("external_account"),
             import_hash=t.get("import_hash"),
         )
         for s in t.get("splits", []):

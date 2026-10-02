@@ -8,7 +8,13 @@ from fastapi.responses import RedirectResponse
 
 from ..auth import require_login
 from ..clients import ServiceError
+from ..refs import split_ref
 from ..rendering import render
+from ..transfers import (
+    TransferError,
+    delete_external_counterpart,
+    transfer_bank_stock,
+)
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
@@ -114,6 +120,14 @@ async def register(request: Request, account_id: int, offset: int = 0, prefill_p
     payees = await clients.ledger.get("/api/payees")
     categories = await clients.ledger.get("/api/categories")
     accounts = await clients.ledger.get("/api/accounts")
+    # Money moves to brokerages as well as to other bank accounts, and the
+    # brokerages belong to another service - so the picker lists both, with
+    # ids namespaced "bank:3" / "stock:1" the way the import screens do. If
+    # stocks is down the form still works for bank-to-bank transfers.
+    try:
+        stock_accounts = await clients.stocks.get("/api/accounts")
+    except ServiceError:
+        stock_accounts = []
 
     # MS Money-style auto-fill: picking a payee and pressing "Fill" re-renders
     # the entry form with the payee's default category and last amount.
@@ -141,6 +155,7 @@ async def register(request: Request, account_id: int, offset: int = 0, prefill_p
             "payees": payees,
             "categories": categories,
             "accounts": [a for a in accounts if a["id"] != account_id],
+            "stock_accounts": stock_accounts,
             "prefill": prefill,
             "today": dt.date.today().isoformat(),
             "offset": offset,
@@ -208,15 +223,39 @@ async def transfer_add(
     account_id: int,
     date: str = Form(...),
     direction: str = Form("out"),
-    other_account_id: int = Form(...),
+    other_account_id: str = Form(...),
     amount: str = Form(...),
     to_amount: str = Form(""),
     memo: str = Form(""),
 ):
     clients = request.app.state.clients
     url = f"/accounts/{account_id}/register"
+    kind, other_ref = split_ref(other_account_id)
+    try:
+        other_id = int(other_ref)
+    except ValueError:
+        return back(url, err="Pick an account to transfer with.")
+
+    if kind == "stock":
+        # The other end is an investment account, which another service owns.
+        try:
+            result = await transfer_bank_stock(
+                clients,
+                bank_account_id=account_id,
+                stock_account_id=other_id,
+                date=date,
+                amount=amount,
+                to_amount=to_amount,
+                to_stock=direction == "out",
+                memo=memo,
+            )
+        except TransferError as exc:
+            return back(url, err=f"Transfer not saved: {exc.detail}")
+        moved = "to" if direction == "out" else "from"
+        return back(url, msg=f"Transfer {moved} {result['stock_name']} saved")
+
     from_id, to_id = (
-        (account_id, other_account_id) if direction == "out" else (other_account_id, account_id)
+        (account_id, other_id) if direction == "out" else (other_id, account_id)
     )
     body = {
         "from_account_id": from_id,
@@ -281,7 +320,16 @@ async def txn_edit_submit(request: Request, transaction_id: int):
             f"/transactions/{transaction_id}/edit?rows={current + 1}", status_code=303
         )
     if "action_delete" in form:
-        await clients.ledger.delete(f"/api/transactions/{transaction_id}")
+        deleted = await clients.ledger.delete(f"/api/transactions/{transaction_id}")
+        # A transfer to a brokerage has its other half in the stocks service;
+        # deleting only this leg would leave that cash sitting there forever.
+        try:
+            await delete_external_counterpart(clients, deleted)
+        except ServiceError as exc:
+            return back(
+                url,
+                err=f"Deleted here, but the brokerage side is still there: {exc.detail}",
+            )
         return back(url, msg="Transaction deleted")
 
     splits = []

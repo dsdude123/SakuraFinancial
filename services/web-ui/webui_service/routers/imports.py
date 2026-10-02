@@ -24,13 +24,16 @@ from fastapi.responses import RedirectResponse
 
 from ..auth import require_login
 from ..clients import ServiceError
+from ..refs import KIND_LABELS, KINDS, split_ref
 from ..rendering import render
+from ..transfers import settle_import_transfers
 from .accounts import back
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
-KINDS = ("bank", "stock")
-KIND_LABELS = {"bank": "Bank / credit card", "stock": "Brokerage"}
+# Re-exported for the templates and tests that import them from here; the
+# namespacing itself lives in webui_service.refs, shared with transfers.
+__all__ = ["router", "KINDS", "KIND_LABELS", "split_ref"]
 
 STOCK_ACTIONS = ("buy", "sell", "dividend", "vest", "deposit", "withdraw", "fee", "ignore")
 
@@ -38,17 +41,6 @@ STOCK_ACTIONS = ("buy", "sell", "dividend", "vest", "deposit", "withdraw", "fee"
 def service_for(request: Request, kind: str):
     clients = request.app.state.clients
     return clients.stocks if kind == "stock" else clients.ledger
-
-
-def split_ref(value: str, default_kind: str = "bank") -> tuple[str, str]:
-    """"stock:4" -> ("stock", "4"). A bare id means the bank ledger, which keeps
-    older bookmarks and the monthly page's per-account forms working."""
-    text = str(value or "").strip()
-    if ":" in text:
-        kind, _, ident = text.partition(":")
-        if kind in KINDS:
-            return kind, ident.strip()
-    return default_kind, text
 
 
 def decode_upload(raw: bytes) -> str:
@@ -173,6 +165,13 @@ async def batch_review(request: Request, kind: str, batch_id: int):
     payees = await clients.ledger.get("/api/payees")
     categories = await clients.ledger.get("/api/categories")
     accounts = await clients.ledger.get("/api/accounts")
+    # A wire to a brokerage is a transfer too, and that account belongs to the
+    # stocks service; without it in the picker the row has to be fixed up after
+    # the import. If stocks is down the bank counterparties still work.
+    try:
+        stock_accounts = await clients.stocks.get("/api/accounts")
+    except ServiceError:
+        stock_accounts = []
     groups = batch.get("description_groups", [])
     return render(
         request,
@@ -182,6 +181,7 @@ async def batch_review(request: Request, kind: str, batch_id: int):
             "payees": payees,
             "categories": categories,
             "accounts": accounts,
+            "stock_accounts": stock_accounts,
             "groups": groups,
             "needs_attention": sum(1 for r in batch["rows"] if r["status"] == "needs_payee"),
             "unresolved_groups": sum(1 for g in groups if g["needs_payee"]),
@@ -213,8 +213,13 @@ async def row_update(request: Request, row_id: int):
     batch_id = str(form.get("batch_id") or "")
     body = assignment_from_form(form)
     body["include"] = form.get("include") == "on"
-    if str(form.get("transfer_account_id") or "").strip():
-        body["transfer_account_id"] = int(form["transfer_account_id"])
+    chosen = str(form.get("transfer_account_id") or "").strip()
+    if chosen:
+        kind, ref = split_ref(chosen)
+        if kind == "stock":
+            body["transfer_external_account"] = f"stock:{ref}"
+        else:
+            body["transfer_account_id"] = int(ref)
     try:
         await request.app.state.clients.ledger.put(f"/api/import/rows/{row_id}", json=body)
     except ServiceError as exc:
@@ -300,6 +305,13 @@ async def batch_commit(
             msg=f"Imported {summary['created']} stock transaction(s) "
             f"({', '.join(summary['symbols']) or 'cash only'})",
         )
+    # Rows whose counterparty was an investment account left the ledger holding
+    # one leg each; the money arrives in the other service now.
+    if summary.get("external_transfers"):
+        summary["settlement"] = await settle_import_transfers(
+            request.app.state.clients, summary
+        )
+        summary["transfers"] -= len(summary["settlement"]["dropped"])
     return render(request, "import_summary.html", {"summary": summary})
 
 

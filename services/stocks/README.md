@@ -14,6 +14,13 @@ Live OpenAPI docs at `/docs`.
 Cash is derived (`opening_cash` + signed cash effects of transactions); lots
 carry their own cost basis, so unrealized/realized gains are exact.
 
+Cash that came from a bank account arrives through
+`POST /api/transfers/external`: an ordinary `deposit`/`withdraw` that also
+carries the ledger leg's `transfer_group_id` and the bank account's ref
+(`external_account="bank:3"`). `DELETE /api/transfers/external/{group}` removes
+this side when the ledger's leg goes, so a transfer never survives as half of
+itself. The full picture is in `docs/architecture.md`.
+
 ## Prices
 
 - **Daily fetch**: an in-process APScheduler job pulls the previous close
@@ -37,6 +44,13 @@ rejects the whole file with instructions to extend the map — nothing imports
 until every row resolves. Committed rows apply full portfolio effects
 (lots, FIFO, cash) oldest-first; re-uploads dedupe by row hash.
 
+A cash row that is the far side of a bank transfer already booked here (the bank
+statement was imported first, and that import credited this account) is flagged
+`counterpart` and left out, so importing both statements doesn't count the money
+twice. The match is on amount within `transfer_match_days` of the profile config
+(default 5), and only against rows carrying an `external_account` — a deposit
+someone typed in is left alone.
+
 ## Analysis (on demand only)
 
 `POST /api/analyze {account_id}` gathers holdings, 52-week price summaries,
@@ -50,6 +64,8 @@ Nothing is ever scheduled.
 ## Other endpoints
 
 Accounts CRUD, transactions (`buy/sell/dividend/vest/deposit/withdraw/fee`),
+`POST /api/transfers/external` + `DELETE /api/transfers/external/{group}`
+(bank <-> brokerage cash),
 `/api/valuation` and `/api/valuation/series` (feeds the net-worth report),
 RSU grants + `POST /api/rsu/vests/{id}/release`, `GET/POST /api/export|import`
 for backup.

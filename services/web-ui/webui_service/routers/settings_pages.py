@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Form, Request
 
 from ..auth import PASSWORD_KEY, hash_password, require_login, verify_password
 from ..clients import ServiceError
+from ..refs import split_ref
 from ..rendering import render
 from .accounts import back
 
@@ -20,6 +21,23 @@ async def settings_page(request: Request):
     currencies = await clients.ledger.get("/api/currencies")
     rules = await clients.ledger.get("/api/transfer-rules")
     accounts = await clients.ledger.get("/api/accounts")
+    # A rule can send an imported row to an investment account, which the stocks
+    # service owns and names — so resolve those names for the rules table and
+    # the picker. Without stocks, existing bank rules still list and edit.
+    try:
+        stock_accounts = await clients.stocks.get("/api/accounts")
+    except ServiceError:
+        stock_accounts = []
+    stock_names = {f"stock:{a['id']}": a["name"] for a in stock_accounts}
+    for rule in rules:
+        if rule.get("external_account"):
+            rule["counter_account"] = stock_names.get(
+                rule["external_account"], rule["external_account"]
+            )
+            rule["counter_is_investment"] = True
+        else:
+            rule["counter_account"] = rule.get("account_name")
+            rule["counter_is_investment"] = False
     return render(
         request,
         "settings.html",
@@ -29,6 +47,7 @@ async def settings_page(request: Request):
             "currencies": currencies,
             "rules": rules,
             "accounts": accounts,
+            "stock_accounts": stock_accounts,
         },
     )
 
@@ -143,18 +162,23 @@ async def add_rule(
     match_days: str = Form("5"),
     pattern: str = Form(...),
     match_type: str = Form("prefix"),
-    account_id: int = Form(...),
+    account_id: str = Form(...),
 ):
+    kind, ref = split_ref(account_id)
+    body: dict = {
+        "pattern": pattern,
+        "match_type": match_type,
+        "match_days": int(match_days) if str(match_days).strip() else 5,
+    }
+    if kind == "stock":
+        body["external_account"] = f"stock:{ref}"
+    else:
+        try:
+            body["account_id"] = int(ref)
+        except ValueError:
+            return back("/settings", err="Pick the account the transfer moves to or from.")
     try:
-        await request.app.state.clients.ledger.post(
-            "/api/transfer-rules",
-            json={
-                "pattern": pattern,
-                "match_type": match_type,
-                "account_id": account_id,
-                "match_days": int(match_days) if str(match_days).strip() else 5,
-            },
-        )
+        await request.app.state.clients.ledger.post("/api/transfer-rules", json=body)
     except ServiceError as exc:
         return back("/settings", err=str(exc.detail))
     return back("/settings", msg="Transfer rule added")

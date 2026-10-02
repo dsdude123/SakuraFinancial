@@ -71,7 +71,7 @@
 
   <input type="submit" class="btn btn-primary" name="action_save" value="Save changes">
   <input type="submit" class="btn" name="action_delete" value="Delete transaction">
-  {% if txn.kind == 'transfer' %}<span class="small dim">deleting a transfer removes both sides</span>{% endif %}
+  {% if txn.kind == 'transfer' %}<span class="small dim">deleting a transfer removes both sides{% if txn.external_account %}, here and in the investment account{% endif %}</span>{% endif %}
   &nbsp; <a href="/accounts/{{ txn.account_id }}/register">Cancel</a>
 </form>
 {% endblock %}

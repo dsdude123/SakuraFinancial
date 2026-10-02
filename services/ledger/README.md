@@ -29,6 +29,18 @@ here. Live OpenAPI docs at `/docs` on the service port.
 - **Transfers** are paired transactions sharing `transfer_group_id`, splits
   have no category, and they never appear in spending/cash-flow reports.
   Deleting one leg deletes both.
+- **Transfer rules** can name an investment account too (`external_account`
+  instead of `account_id`), so a wire to a brokerage imports as a transfer
+  rather than as invented spending. Commit writes this side's leg and returns
+  the settlements left to make in the other service as `external_transfers`;
+  the caller books them and deletes any leg the other service refuses.
+- **Transfers to an investment account** (`POST /api/transfers/external`) have
+  only one leg here: the far account belongs to the stocks service, so the leg
+  records its ref in `external_account` ("stock:1") and the caller books the
+  matching cash row there under the same `transfer_group_id`. Still a
+  categoryless transfer, so funding a brokerage is never spending. Deleting the
+  leg returns its `external_account` and group id so the caller can remove the
+  other side — see `docs/architecture.md`.
 - **Valuations:** `POST /api/accounts/{id}/valuation` records an asset's new
   value as a `kind='valuation'` transaction (the delta). Net worth sees it;
   monthly cash flow never does.
@@ -40,7 +52,7 @@ here. Live OpenAPI docs at `/docs` on the service port.
 | Accounts | `GET/POST /api/accounts`, `GET/PUT/DELETE /api/accounts/{id}`, `POST /api/accounts/{id}/valuation` |
 | Categories | `GET/POST /api/categories`, `PUT/DELETE /api/categories/{id}`, `POST /api/seed-defaults` (first run only) |
 | Payees | `GET/POST /api/payees`, `GET /api/payees/{id}` (incl. auto-fill data), aliases under `/api/payees/{id}/aliases` |
-| Transactions | `GET/POST /api/transactions` (rich filters: account, date range, category, payee, `q`, exact `amount`, `uncategorized`), `PUT /api/transactions/{id}`, `PUT /api/transactions/{id}/splits`, `POST /api/transfers` |
+| Transactions | `GET/POST /api/transactions` (rich filters: account, date range, category, payee, `q`, exact `amount`, `uncategorized`), `PUT /api/transactions/{id}`, `PUT /api/transactions/{id}/splits`, `POST /api/transfers`, `POST /api/transfers/external` |
 | FX | `GET/POST /api/fx`, `GET /api/fx/rate` (manual rates; inverse pairs resolve automatically) |
 | Reports | `/api/reports/category-actuals`, `/api/reports/cashflow`, `/api/reports/net-worth` |
 | Backup | `GET /api/export`, `POST /api/import` (full replace, IDs preserved) |
@@ -62,7 +74,7 @@ NOTHING. A valid file becomes a review batch whose rows are classified:
 | `duplicate` | Row hash (account+date+amount+normalized description) already imported — excluded by default, can be forced back in |
 | `transfer` | A transfer rule matched (e.g. descriptions starting `VENMO` → transfer to the configured account) |
 | `ready` | A learned payee alias matched; payee + default category prefilled |
-| `needs_payee` | Unknown description — pick or create a payee (`PUT /api/import/rows/{id}`); the choice is learned as an alias so next month maps automatically |
+| `needs_payee` | Unknown description — pick or create a payee (`PUT /api/import/rows/{id}`); the choice is learned as an alias so next month maps automatically. Left blank, commit files the row under its own description (unless `name_payees_from_descriptions=false`) and learns that too, so leaving it blank is an answer rather than a row that comes back every month. `description_payee_name` on each row is the name it would get, for the review screen to show |
 
 `POST /api/import/batches/{id}/commit` turns included rows into cleared
 transactions (transfer rows become paired transfer legs), learns aliases, runs

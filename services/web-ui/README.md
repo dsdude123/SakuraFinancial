@@ -26,7 +26,8 @@ rules live in `docs/ie6-style-guide.md` and are enforced by
 ## Pages
 
 Home (accounts + prompts + upcoming bills), per-account register with
-auto-fill and running balance, transfers, asset valuation, transaction/split
+auto-fill and running balance, transfers (including to and from investment
+accounts, which the web UI books in both services at once), asset valuation, transaction/split
 editor, import wizard (validate → review → commit, with full-file error
 reports), import profiles, bills overview (accrual + amount-change prompts),
 budget grid + waterfall + General Fund, goals, payees (incl. learned CSV

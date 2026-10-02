@@ -109,6 +109,7 @@ def transaction_dict(txn: Transaction) -> dict:
         "status": txn.status,
         "kind": txn.kind,
         "transfer_group_id": txn.transfer_group_id,
+        "external_account": txn.external_account,
         "total": money_str(txn.total),
         "splits": [split_dict(split) for split in txn.splits],
     }

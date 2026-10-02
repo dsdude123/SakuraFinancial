@@ -90,6 +90,8 @@ def export(db: Session = Depends(get_db)):
                 "fees": money_str(t.fees),
                 "realized_gain": money_str(t.realized_gain),
                 "note": t.note,
+                "transfer_group_id": t.transfer_group_id,
+                "external_account": t.external_account,
                 "import_hash": t.import_hash,
             }
             for t in db.execute(select(StockTransaction).order_by(StockTransaction.id)).scalars()
@@ -182,6 +184,8 @@ def import_(data: dict, db: Session = Depends(get_db)):
                 fees=jsonutil.parse_decimal(t.get("fees", "0")),
                 realized_gain=jsonutil.parse_decimal(t.get("realized_gain")),
                 note=t.get("note", ""),
+                transfer_group_id=t.get("transfer_group_id"),
+                external_account=t.get("external_account"),
                 import_hash=t.get("import_hash"),
             )
         )

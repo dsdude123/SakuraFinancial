@@ -151,13 +151,11 @@ class TestDedup:
         assert summary["created"] == 0
 
         # A third occurrence on a later statement is new activity, not a repeat
-        # of what's already filed.
+        # of what's already filed. Its payee needs no answer: the first import
+        # filed these rows under their description and learned it.
         third = preview(client, profile, content + "08/01/2026,STORE,-10.00\n").json()
-        assert sorted(r["status"] for r in third["rows"]) == [
-            "duplicate",
-            "duplicate",
-            "needs_payee",
-        ]
+        statuses = sorted(r["status"] for r in third["rows"])
+        assert statuses == ["duplicate", "duplicate", "ready"]
 
     def test_duplicate_can_be_forced_back_in(self, client, profile):
         content = (SAMPLES / "bank-simple.csv").read_text()
@@ -905,6 +903,66 @@ class TestDescriptionBecomesThePayee:
         )
         assert client.get("/api/transactions").json()[0]["payee_name"] is None
         assert "QFC" not in {p["name"] for p in client.get("/api/payees").json()}
+
+    def test_the_review_screen_can_show_the_name_a_blank_row_would_get(
+        self, client, profile
+    ):
+        batch = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,QFC   #123  ,-60.61\n"
+        ).json()
+        assert batch["rows"][0]["description_payee_name"] == "QFC #123"
+        assert batch["description_groups"][0]["description_payee_name"] == "QFC #123"
+
+    def test_the_description_is_learned_so_next_month_arrives_answered(
+        self, client, profile
+    ):
+        """Leaving the payee blank is an answer, and answers are learned. Before
+        this, the same description came back needing the same answer every
+        month, which looks exactly like the description never being used."""
+        first = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n"
+        ).json()
+        client.post(f"/api/import/batches/{first['id']}/commit")
+        qfc = next(p for p in client.get("/api/payees").json() if p["name"] == "QFC")
+
+        second = preview(
+            client, profile, "Date,Description,Amount\n09/01/2026,QFC,-12.00\n"
+        ).json()
+        row = second["rows"][0]
+        assert row["status"] == "ready"
+        assert row["payee_id"] == qfc["id"]
+
+    def test_nothing_is_learned_when_the_fallback_is_off(self, client, profile):
+        batch = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n"
+        ).json()
+        client.post(
+            f"/api/import/batches/{batch['id']}/commit",
+            params={"name_payees_from_descriptions": False},
+        )
+        second = preview(
+            client, profile, "Date,Description,Amount\n09/01/2026,QFC,-12.00\n"
+        ).json()
+        assert second["rows"][0]["status"] == "needs_payee"
+
+    def test_an_alias_the_user_set_deliberately_is_never_repointed(self, client, profile):
+        """An alias added after the upload, pointing somewhere else: the row was
+        classified before it existed, so the fallback still runs — and must not
+        steal the alias."""
+        chosen = client.post("/api/payees", json={"name": "Quality Food Centers"}).json()
+        batch = preview(
+            client, profile, "Date,Description,Amount\n08/01/2026,QFC,-60.61\n"
+        ).json()
+        client.post(
+            f"/api/payees/{chosen['id']}/aliases",
+            json={"pattern": "QFC", "match_type": "exact"},
+        )
+        client.post(f"/api/import/batches/{batch['id']}/commit")
+
+        second = preview(
+            client, profile, "Date,Description,Amount\n09/01/2026,QFC,-12.00\n"
+        ).json()
+        assert second["rows"][0]["payee_id"] == chosen["id"]
 
     def test_transfers_never_get_a_description_payee(self, client, profile, savings):
         client.post(

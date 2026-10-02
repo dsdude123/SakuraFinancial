@@ -6,17 +6,20 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..logic.transactions import (
     create_transaction,
+    create_external_transfer,
     create_transfer,
     replace_splits,
 )
 from ..models import (
     Account,
     Category,
+    ImportRow,
     Payee,
     Split,
     TRANSACTION_STATUSES,
@@ -61,6 +64,21 @@ class TransferIn(BaseModel):
     amount: Decimal
     to_amount: Decimal | None = None
     memo: str = ""
+
+
+class ExternalTransferIn(BaseModel):
+    """A transfer between one ledger account and an account owned by another
+    service (a brokerage in the stocks service). ``direction`` is from this
+    account's point of view; ``amount`` is always positive."""
+
+    account_id: int
+    date: dt.date
+    amount: Decimal
+    direction: str = "out"
+    external_account: str
+    external_name: str = ""
+    memo: str = ""
+    transfer_group_id: str | None = None
 
 
 def load_txn_or_404(db: Session, transaction_id: int) -> Transaction:
@@ -208,6 +226,21 @@ def set_splits(transaction_id: int, body: SplitsReplaceIn, db: Session = Depends
 def delete(transaction_id: int, db: Session = Depends(get_db)):
     txn = load_txn_or_404(db, transaction_id)
     deleted = [txn.id]
+
+    def release_import_rows(ids: list[int]) -> None:
+        """Let go of the review rows that produced these transactions.
+
+        ``import_rows.transaction_id`` is a real foreign key, so deleting an
+        imported transaction without clearing it fails outright on Postgres.
+        Clearing it also leaves the truth: that row's money is no longer in the
+        register, so re-importing the statement offers it again instead of
+        calling it a duplicate.
+        """
+        db.execute(
+            sql_update(ImportRow)
+            .where(ImportRow.transaction_id.in_(ids))
+            .values(transaction_id=None)
+        )
     if txn.transfer_group_id:
         # Transfers are atomic pairs; removing one leg removes both.
         for leg in db.execute(
@@ -216,9 +249,17 @@ def delete(transaction_id: int, db: Session = Depends(get_db)):
             if leg.id != txn.id:
                 deleted.append(leg.id)
                 db.delete(leg)
+    external_account, group = txn.external_account, txn.transfer_group_id
+    release_import_rows(deleted)
     db.delete(txn)
     db.commit()
-    return {"deleted": deleted}
+    # A leg whose other side lives in another service can't be deleted from
+    # here, so say so instead of silently leaving half a transfer behind.
+    return {
+        "deleted": deleted,
+        "transfer_group_id": group,
+        "external_account": external_account,
+    }
 
 
 @router.post("/transfers")
@@ -247,6 +288,31 @@ def transfer(body: TransferIn, db: Session = Depends(get_db)):
     )
     db.commit()
     return {"out": transaction_dict(leg_out), "in": transaction_dict(leg_in)}
+
+
+@router.post("/transfers/external")
+def external_transfer(body: ExternalTransferIn, db: Session = Depends(get_db)):
+    """Book this side of a transfer to or from an account another service owns.
+
+    The caller (the web UI) writes the other side and passes the group id so
+    both rows agree, or takes the generated one from the response.
+    """
+    account = db.get(Account, body.account_id)
+    if account is None:
+        raise HTTPException(422, "unknown account")
+    leg = create_external_transfer(
+        db,
+        account=account,
+        date=body.date,
+        amount=body.amount,
+        direction=body.direction,
+        external_account=body.external_account,
+        external_name=body.external_name,
+        memo=body.memo,
+        transfer_group_id=body.transfer_group_id,
+    )
+    db.commit()
+    return transaction_dict(leg)
 
 
 class BulkEdit(BaseModel):

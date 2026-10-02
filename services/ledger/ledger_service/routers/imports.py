@@ -47,6 +47,9 @@ class RowUpdate(BaseModel):
     create_category_kind: str | None = None
     include: bool | None = None
     transfer_account_id: int | None = None
+    # The counterparty when it isn't a ledger account ("stock:1"); setting one
+    # clears the other, since a row has exactly one far side.
+    transfer_external_account: str | None = None
     learn_alias: bool | None = None
 
 
@@ -59,7 +62,10 @@ class GroupResolve(RowUpdate):
 class TransferRuleIn(BaseModel):
     pattern: str
     match_type: str = "prefix"
-    account_id: int
+    # Exactly one of these: a ledger account, or an account another service owns
+    # ("stock:1" for an investment account).
+    account_id: int | None = None
+    external_account: str | None = None
     active: bool = True
     # Days of slack when matching this transfer against the other account's
     # already-imported leg; the two banks rarely post on the same date.
@@ -82,9 +88,51 @@ def rule_dict(rule: TransferRule) -> dict:
         "match_type": rule.match_type,
         "account_id": rule.account_id,
         "account_name": rule.account.name if rule.account else None,
+        # An external counterparty's name belongs to the service that owns it,
+        # so callers resolve "stock:1" for display themselves.
+        "external_account": rule.external_account,
         "active": rule.active,
         "match_days": rule.match_days,
     }
+
+
+EXTERNAL_ACCOUNT_SERVICES = ("stock",)
+
+
+def clean_external_account(value: str | None) -> str | None:
+    """Validate a counterparty ref another service owns ("stock:1").
+
+    Whether that account exists is the other service's business — this service
+    has no way to ask, and refusing to store a ref it can't verify would make
+    the seam worse, not safer. The shape is checked so a typo can't become a
+    transfer that settles nowhere.
+    """
+    text = (value or "").strip()
+    if not text:
+        return None
+    service, _, ident = text.partition(":")
+    if service not in EXTERNAL_ACCOUNT_SERVICES or not ident.isdigit():
+        raise HTTPException(
+            422,
+            f"{text!r} is not an account in another service; expected one of "
+            + ", ".join(f'"{name}:<id>"' for name in EXTERNAL_ACCOUNT_SERVICES),
+        )
+    return f"{service}:{int(ident)}"
+
+
+def rule_target(db: Session, body: TransferRuleIn) -> tuple[int | None, str | None]:
+    """The counter account a rule points at: a ledger account or an external
+    ref, never both and never neither."""
+    external = clean_external_account(body.external_account)
+    if body.account_id is not None and external is not None:
+        raise HTTPException(
+            422, "A transfer rule points at one counter account, not both a bank and an investment one."
+        )
+    if body.account_id is None and external is None:
+        raise HTTPException(422, "A transfer rule needs a counter account.")
+    if body.account_id is not None and db.get(Account, body.account_id) is None:
+        raise HTTPException(422, f"Account {body.account_id} no longer exists.")
+    return body.account_id, external
 
 
 REQUIRED_KEYS = {"date_column", "description_column"}
@@ -285,6 +333,12 @@ def apply_row_update(db: Session, row, body: RowUpdate) -> None:
         if db.get(Account, body.transfer_account_id) is None:
             raise HTTPException(422, f"Account {body.transfer_account_id} no longer exists.")
         row.transfer_account_id = body.transfer_account_id
+        row.transfer_external_account = None
+        row.status = "transfer"
+    external_account = clean_external_account(body.transfer_external_account)
+    if external_account is not None:
+        row.transfer_external_account = external_account
+        row.transfer_account_id = None
         row.status = "transfer"
     if body.include is not None:
         row.include = body.include
@@ -397,8 +451,7 @@ def list_rules(db: Session = Depends(get_db)):
 def create_rule(body: TransferRuleIn, db: Session = Depends(get_db)):
     if body.match_type not in ("prefix", "contains"):
         raise HTTPException(422, "A transfer rule must match by prefix or by contains.")
-    if db.get(Account, body.account_id) is None:
-        raise HTTPException(422, f"Account {body.account_id} no longer exists.")
+    account_id, external_account = rule_target(db, body)
     if not body.pattern.strip():
         raise HTTPException(422, "A transfer rule needs a pattern to match against.")
     if body.match_days < 0:
@@ -406,7 +459,8 @@ def create_rule(body: TransferRuleIn, db: Session = Depends(get_db)):
     rule = TransferRule(
         pattern=body.pattern.strip(),
         match_type=body.match_type,
-        account_id=body.account_id,
+        account_id=account_id,
+        external_account=external_account,
         active=body.active,
         match_days=body.match_days,
     )
@@ -422,13 +476,13 @@ def update_rule(rule_id: int, body: TransferRuleIn, db: Session = Depends(get_db
         raise HTTPException(404, f"no transfer rule {rule_id}")
     if body.match_type not in ("prefix", "contains"):
         raise HTTPException(422, "A transfer rule must match by prefix or by contains.")
-    if db.get(Account, body.account_id) is None:
-        raise HTTPException(422, f"Account {body.account_id} no longer exists.")
+    account_id, external_account = rule_target(db, body)
     if body.match_days < 0:
         raise HTTPException(422, "The matching window cannot be negative.")
     rule.pattern = body.pattern.strip()
     rule.match_type = body.match_type
-    rule.account_id = body.account_id
+    rule.account_id = account_id
+    rule.external_account = external_account
     rule.active = body.active
     rule.match_days = body.match_days
     db.commit()

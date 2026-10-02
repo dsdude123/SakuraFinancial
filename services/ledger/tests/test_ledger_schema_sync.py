@@ -109,7 +109,11 @@ class TestSequenceResync:
         engine = create_engine("sqlite://")
         Base.metadata.create_all(engine)
         result = sync_schema(engine, Base, service="ledger")
-        assert result == {"added_columns": [], "repaired_sequences": []}
+        assert result == {
+            "added_columns": [],
+            "relaxed_columns": [],
+            "repaired_sequences": [],
+        }
 
 
 def test_a_discarded_batch_does_not_block_the_next_import(client, checking):
@@ -150,3 +154,46 @@ def test_a_discarded_batch_does_not_block_the_next_import(client, checking):
     first_ids = {r["id"] for r in first["rows"]}
     second_ids = {r["id"] for r in batch["rows"]}
     assert not (first_ids & second_ids)
+
+
+class TestRelaxingColumnsNoLongerRequired:
+    """A column can stop being mandatory — transfer_rules.account_id did, once a
+    rule could point at an investment account instead of a ledger one. On a
+    database created before that change the column is still NOT NULL, and the
+    first such rule would die on insert."""
+
+    def relax(self, table_name, live_columns):
+        from sakura_common.schema import columns_to_relax
+        from ledger_service.db import Base
+
+        return columns_to_relax(Base.metadata.tables[table_name], live_columns)
+
+    def live(self, **nullability):
+        return [
+            {"name": name, "nullable": nullable} for name, nullable in nullability.items()
+        ]
+
+    def test_a_column_the_model_made_optional_is_found(self):
+        assert self.relax("transfer_rules", self.live(account_id=False)) == ["account_id"]
+
+    def test_one_already_optional_is_left_alone(self):
+        assert self.relax("transfer_rules", self.live(account_id=True)) == []
+
+    def test_a_column_still_required_by_the_model_is_left_alone(self):
+        assert self.relax("transfer_rules", self.live(pattern=False)) == []
+
+    def test_primary_keys_are_never_touched(self):
+        assert self.relax("transfer_rules", self.live(id=False)) == []
+
+    def test_a_column_the_database_does_not_have_yet_is_left_to_add_missing_columns(self):
+        assert self.relax("transfer_rules", self.live()) == []
+
+    def test_sqlite_needs_none_of_it(self):
+        """A table create_all just made already matches the model, and SQLite
+        cannot ALTER nullability anyway."""
+        from sakura_common.schema import relax_nullable_columns
+        from ledger_service.db import Base
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        assert relax_nullable_columns(engine, Base) == []
