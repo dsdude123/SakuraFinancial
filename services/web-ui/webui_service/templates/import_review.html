@@ -29,7 +29,8 @@ month's import.</p>
   <tr class="{{ loop.cycle('odd', 'even') }}">
     <td class="small">
       {{ g.description }}
-      {% if g.needs_payee %}<br><span class="chip chip-warn">Needs a payee</span>{% endif %}
+      {% if g.needs_payee %}<br><span class="chip chip-warn">Needs a payee</span>
+      <span class="dim">left blank &rarr; <b>{{ g.description_payee_name }}</b></span>{% endif %}
     </td>
     <td class="num">{{ g.count }}</td>
     <td class="num {% if g.total is negative %}neg{% endif %}">{{ g.total|money }}</td>
@@ -100,6 +101,8 @@ picks income or expense from the sign of the rows.</p>
             {% endfor %}
           </select>
           <span class="small dim">or new:</span> <input type="text" name="new_payee" size="10">
+          {% if not r.payee_id %}<span class="small dim">blank &rarr;
+          <b>{{ r.description_payee_name }}</b></span>{% endif %}
           <select name="category_id">
             <option value="">(uncategorized)</option>
             {% for c in categories %}
@@ -143,8 +146,10 @@ transactions on the same day in one file are both real &mdash; they are not
 treated as duplicates of each other.</p>
 <p class="small dim">Plenty of descriptions already are the payee ("QFC",
 "Service Charge"), so unless you untick the box above, any row you left without
-one is filed under its description rather than under nothing at all. An
-existing payee of that name is reused.</p>
+one is filed under its description rather than under nothing at all &mdash; each
+row above shows the name it would get. An existing payee of that name is reused,
+and the description is learned as an alias just as a name you type is, so the
+same row arrives already answered next month.</p>
 <p class="small dim">A row marked <b>other side of a transfer</b> is the far leg of a
 transfer already recorded from the first account's statement, matched by amount
 inside the transfer rule's window. Importing it would book the same movement

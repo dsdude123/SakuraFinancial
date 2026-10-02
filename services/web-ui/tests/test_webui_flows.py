@@ -522,3 +522,28 @@ class TestReprocessAndPayeeFallback:
         logged_in.post("/import/batches/bank/1/commit", data={})
         assert "QFC" not in {p["name"] for p in ledger_api.get("/api/payees").json()}
         assert all(t["payee_name"] is None for t in ledger_api.get("/api/transactions").json())
+
+    def test_the_review_screen_names_what_a_blank_row_will_get(self, logged_in):
+        """Leaving the payee blank was invisible: the row said "Needs a payee"
+        and the picker said "(no payee)", with nothing to say the description
+        would be used."""
+        self.seed(logged_in)
+        page = logged_in.get("/import/batches/bank/1")
+        assert "blank &rarr;" in page.text or "blank \u2192" in page.text
+        assert "QFC" in page.text
+
+    def test_a_blank_row_is_answered_for_next_month(self, logged_in, ledger_api):
+        """The name pulled from the description sticks, like a name typed in."""
+        self.seed(logged_in)
+        logged_in.post(
+            "/import/batches/bank/1/commit", data={"name_from_description": "on"}
+        )
+        logged_in.post(
+            "/import/preview",
+            data={"profile_id": "bank:1", "account_id": ""},
+            files={"file": ("sep.csv", "Date,Description,Amount\n09/03/2026,QFC,-12.00\n",
+                            "text/csv")},
+        )
+        row = ledger_api.get("/api/import/batches/2").json()["rows"][0]
+        assert row["status"] == "ready"
+        assert row["payee_name"] == "QFC"

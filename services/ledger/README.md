@@ -74,7 +74,7 @@ NOTHING. A valid file becomes a review batch whose rows are classified:
 | `duplicate` | Row hash (account+date+amount+normalized description) already imported — excluded by default, can be forced back in |
 | `transfer` | A transfer rule matched (e.g. descriptions starting `VENMO` → transfer to the configured account) |
 | `ready` | A learned payee alias matched; payee + default category prefilled |
-| `needs_payee` | Unknown description — pick or create a payee (`PUT /api/import/rows/{id}`); the choice is learned as an alias so next month maps automatically |
+| `needs_payee` | Unknown description — pick or create a payee (`PUT /api/import/rows/{id}`); the choice is learned as an alias so next month maps automatically. Left blank, commit files the row under its own description (unless `name_payees_from_descriptions=false`) and learns that too, so leaving it blank is an answer rather than a row that comes back every month. `description_payee_name` on each row is the name it would get, for the review screen to show |
 
 `POST /api/import/batches/{id}/commit` turns included rows into cleared
 transactions (transfer rows become paired transfer legs), learns aliases, runs

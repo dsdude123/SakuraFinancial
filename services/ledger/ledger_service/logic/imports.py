@@ -320,6 +320,13 @@ def reclassify_batch(db: Session, batch: ImportBatch) -> dict:
     return {"batch_id": batch.id, "changed": changed, "row_counts": counts}
 
 
+def payee_name_from_description(description: str) -> str:
+    """The payee name a row would get if it is committed without one: the
+    bank's description, with its whitespace tidied. The review screen shows it,
+    so "leave it blank" is a visible choice rather than a surprise."""
+    return " ".join(description.split()).strip()
+
+
 def payee_from_description(db: Session, description: str) -> int | None:
     """Get or create a payee named after the bank's own description.
 
@@ -327,7 +334,7 @@ def payee_from_description(db: Session, description: str) -> int | None:
     so leaving those rows with no payee at all throws away information the
     statement handed over. Reuses an existing payee of that name rather than
     accumulating near-duplicates."""
-    name = " ".join(description.split()).strip()
+    name = payee_name_from_description(description)
     if not name:
         return None
     existing = db.execute(select(Payee).where(Payee.name == name)).scalar_one_or_none()
@@ -407,8 +414,10 @@ def commit_batch(
                 txn.import_hash = row.row_hash
             transfers += 1
         else:
+            named_from_description = False
             if row.payee_id is None and name_payees_from_descriptions:
                 row.payee_id = payee_from_description(db, row.description)
+                named_from_description = row.payee_id is not None
             category_id = row.category_id
             if category_id is None and row.payee is not None:
                 category_id = row.payee.default_category_id
@@ -427,6 +436,12 @@ def commit_batch(
             created += 1
             if row.learn_alias and row.payee_id is not None:
                 learn_exact_alias(db, row.payee_id, row.description)
+            elif named_from_description:
+                # Leaving the payee blank is an answer too: the description is
+                # the name. Learn it like any other, or the same row comes back
+                # needing the same answer every month - which looks exactly
+                # like the description never being used at all.
+                learn_exact_alias(db, row.payee_id, row.description, overwrite=False)
         db.flush()  # assign txn.id so rows/bills can reference it
         row.transaction_id = txn.id
         if txn.kind == "normal":
@@ -517,6 +532,7 @@ def description_groups(batch: ImportBatch) -> list[dict]:
             {
                 **group,
                 "total": money_str(group["total"]),
+                "description_payee_name": payee_name_from_description(group["description"]),
                 "needs_payee": "needs_payee" in statuses,
                 "status": "needs_payee" if "needs_payee" in statuses else sorted(statuses)[0],
             }
@@ -526,14 +542,22 @@ def description_groups(batch: ImportBatch) -> list[dict]:
     return result
 
 
-def learn_exact_alias(db: Session, payee_id: int, description: str) -> None:
+def learn_exact_alias(
+    db: Session, payee_id: int, description: str, overwrite: bool = True
+) -> None:
+    """Map this exact description to a payee from now on.
+
+    ``overwrite=False`` is for an alias nobody asked for — the payee named after
+    the description — which must never repoint an alias the user chose
+    deliberately.
+    """
     pattern = normalize_description(description)
     existing = db.execute(
         select(PayeeAlias).where(PayeeAlias.pattern == pattern, PayeeAlias.match_type == "exact")
     ).scalar_one_or_none()
     if existing is None:
         db.add(PayeeAlias(payee_id=payee_id, pattern=pattern, match_type="exact"))
-    else:
+    elif overwrite:
         existing.payee_id = payee_id
 
 
@@ -561,6 +585,8 @@ def row_dict(row: ImportRow) -> dict:
         "include": row.include,
         "payee_id": row.payee_id,
         "payee_name": row.payee.name if row.payee else None,
+        # What committing it with no payee would file it under.
+        "description_payee_name": payee_name_from_description(row.description),
         "category_id": row.category_id,
         "transfer_account_id": row.transfer_account_id,
         "transfer_external_account": row.transfer_external_account,

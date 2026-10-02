@@ -101,13 +101,23 @@ class TestPricesAndValuation:
         assert result["prices_loaded"] == 2
 
     def test_valuation_series_months(self, client, brokerage, buy_aapl):
-        buy_aapl(date="2026-07-01")
-        client.post("/api/prices", json={"symbol": "AAPL", "date": "2026-07-31", "close": "155.00"})
+        """The series is the last N months counted back from today, so the test
+        data has to be dated relative to today too — pinned dates passed until
+        the clock moved past them, then this failed on its own."""
+        import datetime as dt
+
+        last_month_end = dt.date.today().replace(day=1) - dt.timedelta(days=1)
+        buy_aapl(date=last_month_end.replace(day=1).isoformat())
+        client.post(
+            "/api/prices",
+            json={"symbol": "AAPL", "date": last_month_end.isoformat(), "close": "155.00"},
+        )
         series = client.get("/api/valuation/series", params={"months": 3}).json()
         assert len(series) == 3
-        # July: cash 8500 + 10*155
-        july = next(row for row in series if row["month"] == "2026-07")
-        assert july["total"] == "10050.00"
+        # Last month: cash 8500 + 10*155
+        month = last_month_end.strftime("%Y-%m")
+        row = next(r for r in series if r["month"] == month)
+        assert row["total"] == "10050.00"
 
 
 class TestRsu:
